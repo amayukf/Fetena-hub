@@ -451,13 +451,17 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           program: true,
           entitlements: {
             where: { isActive: true },
-            select: { programTermId: true },
+            include: {
+              programTerm: {
+                include: { program: true, term: true },
+              },
+            },
           },
         },
       });
 
       if (!user || !user.isActive || user.deletedAt !== null) {
-        return sendJson(res, 200, { authenticated: false, user: null, unlockedProgramTermIds: [] });
+        return sendJson(res, 200, { authenticated: false, user: null, unlockedProgramTermIds: [], unlockedStreamCodes: [] });
       }
 
       const streamCode = (user.program?.code as StreamCode) || (user.role === Role.STUDENT ? 'NAT_SCI' : null);
@@ -479,6 +483,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           canSell: user.canSell,
         },
         unlockedProgramTermIds: user.entitlements.map(e => e.programTermId),
+        unlockedStreamCodes: user.entitlements.map(e => e.programTerm?.program?.code).filter(Boolean),
       });
     }
 
@@ -651,6 +656,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           include: {
             programTerm: {
               include: {
+                program: true,
+                term: true,
                 courses: true,
               },
             },

@@ -1481,8 +1481,8 @@ function Checkout({
 
   const [method, setMethod] = useState<PaymentMethod>("TELEBIRR");
   const [txId, setTxId] = useState(rejectedPayment?.transactionId || "");
-  const [screenshotUrl, setScreenshotUrl] = useState("https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=600&q=80");
-  const [screenshotName, setScreenshotName] = useState(rejectedPayment ? "corrected_payment_proof.jpg" : "telebirr_payment_proof.jpg");
+  const [screenshotUrl, setScreenshotUrl] = useState("");
+  const [screenshotName, setScreenshotName] = useState("");
   const [submittedPayment, setSubmittedPayment] = useState<StorePayment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1508,6 +1508,10 @@ function Checkout({
     e.preventDefault();
     if (!txId.trim() || txId.trim().length < 4) {
       setError("Please enter a valid transaction reference ID (e.g. TB4F8K92 or CBE778942).");
+      return;
+    }
+    if (!screenshotUrl) {
+      setError("Please choose and upload your payment receipt screenshot before submitting.");
       return;
     }
     setError(null);
@@ -1709,10 +1713,21 @@ function Checkout({
               disabled={!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()}
             />
 
-            <div className="upload-box" style={{ cursor: (!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()) ? "not-allowed" : "pointer", opacity: (!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()) ? 0.6 : 1 }} onClick={() => { if (settings.telebirrPhone?.trim() || settings.cbeAccountNumber?.trim()) fileInputRef.current?.click(); }}>
+            <div
+              className="upload-box"
+              style={{
+                cursor: (!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()) ? "not-allowed" : "pointer",
+                opacity: (!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()) ? 0.6 : 1,
+                border: screenshotUrl ? "2px solid var(--primary)" : undefined,
+                background: screenshotUrl ? "rgba(12, 74, 52, 0.04)" : undefined,
+              }}
+              onClick={() => {
+                if (settings.telebirrPhone?.trim() || settings.cbeAccountNumber?.trim()) fileInputRef.current?.click();
+              }}
+            >
               <input
                 type="file"
-                ref={fileInputRef.current ? undefined : fileInputRef}
+                ref={fileInputRef}
                 style={{ display: "none" }}
                 accept="image/png,image/jpeg"
                 onChange={handleFileChange}
@@ -1720,9 +1735,12 @@ function Checkout({
               />
               <Icon name="image" size={32}/>
               <strong>Upload payment receipt screenshot</strong>
-              <small>{screenshotName} (PNG or JPG, up to 5 MB)</small>
-              <Button variant="secondary" disabled={!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()} onClick={() => fileInputRef.current?.click()}>
-                Choose screenshot
+              <small>{screenshotName ? `${screenshotName} (ready)` : "PNG or JPG, up to 5 MB"}</small>
+              <Button
+                variant="secondary"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {screenshotName ? "Change screenshot" : "Choose screenshot"}
               </Button>
             </div>
 
@@ -2875,7 +2893,50 @@ export default function App() {
   };
 
   const currentTermKey = `pt-${selectedStream === "NAT_SCI" ? "nat-sci" : "soc-sci"}-y1s1`;
-  const isCurrentSemesterUnlocked = unlockedSemesters.has(currentTermKey);
+
+  const isCurrentSemesterUnlocked = useMemo(() => {
+    // 1. Staff and admins can always view curriculum content
+    if (currentUser && currentUser.role !== "STUDENT") {
+      return true;
+    }
+
+    // 2. Check if student has unlocked via Set key
+    if (unlockedSemesters.has(currentTermKey)) {
+      return true;
+    }
+
+    // 3. Check if student has an APPROVED payment for this stream & semester
+    const myId = currentUser?.userId || (currentUser as any)?.id;
+    if (myId) {
+      const hasApprovedPayment = (payments || []).some(
+        p =>
+          (p.userId === myId || p.studentId === currentUser?.studentId) &&
+          (p.stream === selectedStream || !p.stream) &&
+          p.academicYearNumber === 1 &&
+          p.semesterNumber === 1 &&
+          p.status === "APPROVED"
+      );
+      if (hasApprovedPayment) return true;
+
+      // Also check any approved payment for this user regardless of stream mapping
+      const anyApproved = (payments || []).some(
+        p =>
+          (p.userId === myId || p.studentId === currentUser?.studentId) &&
+          p.status === "APPROVED"
+      );
+      if (anyApproved) return true;
+    }
+
+    // 4. Check if unlockedSemesters contains any programTermId or stream indicator
+    for (const termId of unlockedSemesters) {
+      if (termId === currentTermKey || termId.includes(selectedStream.toLowerCase())) {
+        return true;
+      }
+    }
+
+    return false;
+  }, [currentUser, unlockedSemesters, currentTermKey, payments, selectedStream]);
+
   const pendingPaymentsCount = payments.filter(p => p.status === "PENDING").length;
 
   // Refresh data from real PostgreSQL database
@@ -3045,14 +3106,29 @@ export default function App() {
         setWantedPapers(mappedWanted);
       }
 
-      if (data.entitlements) {
-        const unlocked = new Set<string>();
-        data.entitlements.forEach((e: any) => {
-          unlocked.add(e.programTermId);
-          if (e.programTerm?.program?.code === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
-          if (e.programTerm?.program?.code === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
+      if (data.entitlements || data.payments) {
+        setUnlockedSemesters(prev => {
+          const unlocked = new Set<string>(prev);
+          if (data.entitlements) {
+            data.entitlements.forEach((e: any) => {
+              unlocked.add(e.programTermId);
+              const pCode = e.programTerm?.program?.code;
+              if (pCode === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
+              if (pCode === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
+            });
+          }
+          if (data.payments) {
+            data.payments.forEach((p: any) => {
+              if (p.status === "APPROVED") {
+                unlocked.add(p.programTermId);
+                const pCode = p.programTerm?.program?.code || p.stream;
+                if (pCode === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
+                if (pCode === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
+              }
+            });
+          }
+          return unlocked;
         });
-        setUnlockedSemesters(unlocked);
       }
     } catch (err) {
       console.error("[Database Bootstrap Error]:", err);
@@ -3081,7 +3157,21 @@ export default function App() {
           setSelectedStream(stream);
           setMustChangePassword(Boolean(meRes.mustChangePassword));
           if (meRes.unlockedProgramTermIds) {
-            setUnlockedSemesters(new Set(meRes.unlockedProgramTermIds));
+            setUnlockedSemesters(prev => {
+              const unlocked = new Set<string>(prev);
+              meRes.unlockedProgramTermIds.forEach((id: string) => unlocked.add(id));
+              if (meRes.unlockedStreamCodes) {
+                meRes.unlockedStreamCodes.forEach((sc: string) => {
+                  if (sc === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
+                  if (sc === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
+                });
+              }
+              if (meRes.unlockedProgramTermIds.length > 0) {
+                if (stream === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
+                if (stream === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
+              }
+              return unlocked;
+            });
           }
         }
       } catch (err) {
@@ -3154,9 +3244,14 @@ export default function App() {
       setPayments(prev =>
         prev.map(p => (p.id === payId ? { ...p, status: "APPROVED", reviewedAt: "Just now", reviewedBy: currentUser.fullName } : p))
       );
-      if (res.entitlement?.programTermId) {
-        setUnlockedSemesters(prev => new Set([...prev, res.entitlement.programTermId, currentTermKey]));
-      }
+      const streamKey = target?.stream === "SOC_SCI" ? "pt-soc-sci-y1s1" : "pt-nat-sci-y1s1";
+      setUnlockedSemesters(prev => new Set([
+        ...prev,
+        streamKey,
+        currentTermKey,
+        res.entitlement?.programTermId || "",
+        target?.programTermId || "",
+      ]));
       setReviewingPayment(null);
       await refreshDatabaseData();
     } catch (err: any) {
