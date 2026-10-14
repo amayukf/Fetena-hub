@@ -1,0 +1,533 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -------------------------------------------------------------
+// ENUMS
+// -------------------------------------------------------------
+
+enum Role {
+  STUDENT
+  CONTENT_MANAGER
+  PAYMENT_VERIFIER
+  ADMIN
+}
+
+enum ProgramType {
+  STREAM       // e.g. NATURAL_SCIENCE, SOCIAL_SCIENCE
+  DEPARTMENT   // Upper years added later via data
+}
+
+enum ExamType {
+  FINAL
+  MID
+  QUIZ
+  ASSIGNMENT
+}
+
+enum ScanQuality {
+  EXCELLENT
+  GOOD
+  FAIR
+}
+
+enum PaperStatus {
+  PUBLISHED
+  DRAFT
+  HIDDEN
+  ARCHIVED
+}
+
+enum PaymentMethod {
+  TELEBIRR
+  CBE_BIRR
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ContributionStatus {
+  SUBMITTED
+  IN_REVIEW
+  CHANGES_REQUESTED
+  OFFER_MADE
+  ACCEPTED
+  PUBLISHED
+  PAID
+  REJECTED
+}
+
+enum PaperRequestStatus {
+  OPEN
+  IN_PROGRESS
+  FULFILLED
+  CLOSED
+}
+
+enum AuditRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// -------------------------------------------------------------
+// USER & SESSIONS
+// -------------------------------------------------------------
+
+model User {
+  id              String         @id @default(uuid())
+  studentId       String?        @unique // e.g. AMU-2026-0042
+  fullName        String
+  phone           String?        @unique
+  email           String?        @unique
+  passwordHash    String
+  role            Role           @default(STUDENT)
+  
+  // Current enrolled stream
+  programId       String?
+  program         Program?       @relation(fields: [programId], references: [id], onDelete: SetNull)
+  currentYear     Int?           @default(1) // Freshman year = 1
+  
+  isActive        Boolean        @default(true)
+  isVerified      Boolean        @default(false)
+  canSell         Boolean        @default(true) // User permission to sell papers to admin
+  avatarUrl       String?
+  
+  deletedAt       DateTime?      // Soft delete
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  sessions             Session[]
+  passwordResetTokens  PasswordResetToken[]
+  entitlements         Entitlement[]
+  payments             Payment[]            @relation("StudentPayments")
+  reviewedPayments     Payment[]            @relation("VerifierPayments")
+  contributions        PaperContribution[]  @relation("StudentContributions")
+  reviewedContribs     PaperContribution[]  @relation("AdminReviewedContributions")
+  paperRequests        PaperRequest[]
+  notifications        Notification[]
+  termInterests        TermInterest[]
+  auditLogs            AuditLog[]
+  paperViews           PaperViewLog[]
+  uploadedPapers       ExamPaper[]          @relation("UploadedByUser")
+
+  @@index([role])
+  @@index([programId])
+  @@index([deletedAt])
+}
+
+model Session {
+  id               String   @id @default(uuid())
+  sessionTokenHash String   @unique // SHA-256 hash of raw session token
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress        String?
+  userAgent        String?
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+
+  @@index([userId])
+  @@index([sessionTokenHash])
+}
+
+model PasswordResetToken {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique // SHA-256 hash of reset token
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+// -------------------------------------------------------------
+// GENERIC ACADEMIC STRUCTURE (Campus -> Program -> Term)
+// -------------------------------------------------------------
+
+model Campus {
+  id          String      @id @default(uuid())
+  code        String      @unique // e.g. "WOLISO", "MAIN"
+  name        String      // e.g. "Ambo University - Woliso Campus"
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  programs    Program[]
+  examPapers  ExamPaper[]
+
+  @@index([isActive])
+}
+
+model Program {
+  id          String        @id @default(uuid())
+  campusId    String
+  campus      Campus        @relation(fields: [campusId], references: [id], onDelete: Cascade)
+  code        String        // e.g. "NAT_SCI", "SOC_SCI"
+  name        String        // e.g. "Natural Science", "Social Science"
+  type        ProgramType   @default(STREAM)
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  programTerms ProgramTerm[]
+  users        User[]
+
+  @@unique([campusId, code])
+  @@index([campusId])
+  @@index([type])
+}
+
+model Term {
+  id             String        @id @default(uuid())
+  yearNumber     Int           // 1 for Freshman
+  semesterNumber Int           // 1 or 2
+  name           String        // e.g. "Year 1, Semester 1"
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  programTerms   ProgramTerm[]
+  termInterests  TermInterest[]
+
+  @@unique([yearNumber, semesterNumber])
+}
+
+// -------------------------------------------------------------
+// PURCHASABLE ITEM & COURSE MAPPING
+// -------------------------------------------------------------
+
+model ProgramTerm {
+  id            String               @id @default(uuid())
+  programId     String
+  program       Program              @relation(fields: [programId], references: [id], onDelete: Cascade)
+  termId        String
+  term          Term                 @relation(fields: [termId], references: [id], onDelete: Cascade)
+  
+  priceEtb      Decimal              @default(50.00) @db.Decimal(10, 2)
+  isPurchasable Boolean              @default(true) // false for "Coming Soon" (e.g. Y1S2)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  courses       ProgramTermCourse[]
+  entitlements  Entitlement[]
+  payments      Payment[]
+
+  @@unique([programId, termId])
+  @@index([programId])
+  @@index([termId])
+}
+
+model Course {
+  id            String               @id @default(uuid())
+  code          String               @unique // Normalized e.g. "MATH 1011", "FLEn 1011"
+  title         String               // e.g. "Mathematics for Natural Sciences"
+  creditHours   Int                  @default(3)
+  isActive      Boolean              @default(true)
+  deletedAt     DateTime?            // Soft delete
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  programTerms  ProgramTermCourse[]
+  examPapers    ExamPaper[]
+  paperRequests PaperRequest[]
+  contributions PaperContribution[]
+  wantedPapers  WantedPaper[]
+
+  @@index([code])
+  @@index([isActive, deletedAt])
+}
+
+model ProgramTermCourse {
+  id            String       @id @default(uuid())
+  programTermId String
+  programTerm   ProgramTerm  @relation(fields: [programTermId], references: [id], onDelete: Cascade)
+  courseId      String
+  course        Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  isRequired    Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+
+  @@unique([programTermId, courseId])
+  @@index([programTermId])
+  @@index([courseId])
+}
+
+// -------------------------------------------------------------
+// EXAM PAPERS (Belongs to Course, NOT Stream)
+// -------------------------------------------------------------
+
+model ExamPaper {
+  id            String              @id @default(uuid())
+  courseId      String
+  course        Course              @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  campusId      String?
+  campus        Campus?             @relation(fields: [campusId], references: [id], onDelete: SetNull)
+  title         String              // e.g. "FLEn 1011 · Final Exam 2015 E.C."
+  examType      ExamType            @default(FINAL)
+  
+  // Ethiopian Calendar year (e.g. 2015, 2016 E.C.) matching university scripts
+  examYearEc    Int                 
+  quality       ScanQuality         @default(EXCELLENT)
+  pageCount     Int                 @default(1)
+  
+  storageKey    String              // Private published S3/R2 storage key
+  sha256        String              @unique // SHA-256 content hash, prevents duplicates
+  mimeType      String              @default("application/pdf")
+  fileSizeBytes Int                 @default(0)
+  
+  isFreeSample  Boolean             @default(false)
+  status        PaperStatus         @default(PUBLISHED)
+  deletedAt     DateTime?           // Soft delete
+  
+  uploadedById  String?
+  uploadedBy    User?               @relation("UploadedByUser", fields: [uploadedById], references: [id], onDelete: SetNull)
+  publishedAt   DateTime?           @default(now())
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  views         PaperViewLog[]
+  contribution  PaperContribution?
+
+  @@index([courseId])
+  @@index([status, deletedAt])
+  @@index([isFreeSample])
+  @@index([sha256])
+}
+
+// -------------------------------------------------------------
+// ENTITLEMENTS (Paid Student Access to a ProgramTerm)
+// -------------------------------------------------------------
+
+model Entitlement {
+  id            String       @id @default(uuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Restrict) // Restrict delete
+  programTermId String
+  programTerm   ProgramTerm  @relation(fields: [programTermId], references: [id], onDelete: Restrict)
+  
+  paymentId     String?      @unique
+  payment       Payment?     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  
+  grantedById   String?      // Verifier/Admin ID
+  isActive      Boolean      @default(true)
+  validUntil    DateTime?
+  createdAt     DateTime     @default(now())
+
+  @@unique([userId, programTermId])
+  @@index([userId])
+  @@index([programTermId])
+}
+
+model Payment {
+  id                 String         @id @default(uuid())
+  referenceCode      String         @unique // e.g. "EV-2026-0842"
+  userId             String
+  user               User           @relation("StudentPayments", fields: [userId], references: [id], onDelete: Restrict) // Restrict delete
+  programTermId      String
+  programTerm        ProgramTerm    @relation(fields: [programTermId], references: [id], onDelete: Restrict)
+  
+  amountEtb          Decimal        @db.Decimal(10, 2)
+  paymentMethod      PaymentMethod  @default(TELEBIRR)
+  transactionId      String         // Composite unique with paymentMethod
+  screenshotKey      String?
+  screenshotSha256   String?        // Screenshot image hash
+  resubmitCount      Int            @default(0) // Incremented on resubmission of rejected payment
+  
+  status             PaymentStatus  @default(PENDING)
+  rejectionReason    String?
+  
+  reviewedById       String?
+  reviewedBy         User?          @relation("VerifierPayments", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt         DateTime?
+  
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  entitlement        Entitlement?
+
+  @@unique([paymentMethod, transactionId])
+  @@index([status])
+  @@index([userId])
+  @@index([programTermId])
+  @@index([screenshotSha256])
+}
+
+// -------------------------------------------------------------
+// SELL-TO-ADMIN: CONTRIBUTIONS & BUYBACK PAYOUTS
+// -------------------------------------------------------------
+
+model PaperContribution {
+  id                     String             @id @default(uuid())
+  studentId              String
+  student                User               @relation("StudentContributions", fields: [studentId], references: [id], onDelete: Restrict) // Restrict delete
+  courseId               String
+  course                 Course             @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  
+  examType               ExamType           @default(FINAL)
+  examDate               DateTime           // Must be in the past
+  academicYearEc         Int                // Ethiopian Calendar year
+  studentNotes           String?
+  
+  declarationText        String             // Authenticity declaration text
+  declarationAcceptedAt  DateTime           // Timestamp student signed declaration
+  
+  payoutPaymentMethod    PaymentMethod      @default(TELEBIRR)
+  payoutAccount          String             // Phone number or CBE account for payment
+  proposedPayoutEtb      Decimal?           @db.Decimal(10, 2) // Non-binding suggestion
+  approvedPayoutEtb      Decimal?           @db.Decimal(10, 2) // Sole amount used for payout
+  payoutTxId             String?            @unique // Unique payout tx reference
+  payoutReceiptKey       String?
+  
+  status                 ContributionStatus @default(SUBMITTED)
+  rejectionReason        String?
+  
+  reviewedById           String?
+  reviewedBy             User?              @relation("AdminReviewedContributions", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt             DateTime?
+  
+  examPaperId            String?            @unique // 1:1 relation to published ExamPaper
+  examPaper              ExamPaper?         @relation(fields: [examPaperId], references: [id], onDelete: SetNull)
+
+  files                  ContributionFile[] // Multi-page scan files in quarantine
+
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  @@index([status])
+  @@index([studentId])
+  @@index([courseId])
+  @@index([examDate])
+}
+
+model ContributionFile {
+  id             String             @id @default(uuid())
+  contributionId String
+  contribution   PaperContribution  @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+  
+  storageKey     String             // Private quarantine storage prefix
+  sha256         String             // File content hash
+  mimeType       String             
+  sizeBytes      Int                
+  pageOrder      Int                @default(1)
+  createdAt      DateTime           @default(now())
+
+  @@index([contributionId])
+  @@index([sha256])
+}
+
+// -------------------------------------------------------------
+// NOTIFICATIONS, WANTED PAPERS & INTERESTS
+// -------------------------------------------------------------
+
+model WantedPaper {
+  id              String       @id @default(uuid())
+  courseId        String
+  course          Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  examType        ExamType     @default(FINAL)
+  offeredPriceEtb Decimal      @db.Decimal(10, 2)
+  isOpen          Boolean      @default(true)
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([courseId])
+  @@index([isOpen])
+}
+
+model TermInterest {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  termId    String
+  term      Term     @relation(fields: [termId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, termId])
+  @@index([userId])
+  @@index([termId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String   @default("INFO")
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model PaperRequest {
+  id           String             @id @default(uuid())
+  studentId    String
+  student      User               @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  courseId     String
+  course       Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  examType     ExamType           @default(FINAL)
+  examYear     Int?
+  notes        String?
+  status       PaperRequestStatus @default(OPEN)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([courseId])
+  @@index([status])
+}
+
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+}
+
+model AuditLog {
+  id         String         @id @default(uuid())
+  action     String         
+  entityType String         
+  entityId   String?
+  actorId    String?
+  actor      User?          @relation(fields: [actorId], references: [id], onDelete: Restrict) // Restrict delete
+  ipAddress  String?
+  userAgent  String?
+  riskLevel  AuditRiskLevel @default(LOW)
+  details    Json?
+  createdAt  DateTime       @default(now())
+
+  @@index([action])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+model PaperViewLog {
+  id          String    @id @default(uuid())
+  examPaperId String
+  examPaper   ExamPaper @relation(fields: [examPaperId], references: [id], onDelete: Restrict)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Restrict) // Restrict delete
+  ipAddress   String?
+  userAgent   String?
+  viewedAt    DateTime  @default(now())
+
+  @@index([examPaperId])
+  @@index([userId])
+}

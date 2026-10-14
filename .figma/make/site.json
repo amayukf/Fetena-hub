@@ -1,0 +1,10 @@
+{
+  "description": "Access previous exam papers effortlessly with a low semester fee, designed for Ambo University students to enhance their study experience.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
