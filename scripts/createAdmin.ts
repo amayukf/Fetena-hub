@@ -4,8 +4,8 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function createAdmin() {
-  const email = process.env.ADMIN_EMAIL || process.argv[2];
-  const password = process.env.ADMIN_INITIAL_PASSWORD || process.argv[3];
+  const email = process.argv[2] || process.env.ADMIN_EMAIL;
+  const password = process.argv[3] || process.env.ADMIN_INITIAL_PASSWORD;
 
   if (!email || !password) {
     console.log('\n❌ Usage: npm run create-admin <email> <password>');

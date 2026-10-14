@@ -144,11 +144,15 @@ function Header({
   currentUser,
   onMenu,
   pendingCount = 0,
+  isAdminScreen = false,
+  onLogout,
 }: {
   go: (s: Screen) => void;
   currentUser: UserSession;
   onMenu?: () => void;
   pendingCount?: number;
+  isAdminScreen?: boolean;
+  onLogout?: () => void;
 }) {
   const initials = currentUser.fullName.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   const isStaff = currentUser.role !== "STUDENT";
@@ -156,14 +160,31 @@ function Header({
   return <header className="topbar">
     <div className="topbar-left">
       {onMenu && <Button variant="ghost" onClick={onMenu} className="menu-btn"><Icon name="menu"/></Button>}
-      <div style={{ cursor: "pointer" }} onClick={() => go("landing")}><Logo/></div>
+      <div style={{ cursor: "pointer" }} onClick={() => go(isStaff ? "admin" : "dashboard")}><Logo/></div>
     </div>
     <div className="topbar-actions">
       {isStaff && (
-        <span className="role-pill-btn" style={{ cursor: "default", opacity: 0.9 }}>
-          <Icon name="shield" size={14}/>
-          <span>{currentUser.role.replace("_", " ")}</span>
-        </span>
+        <button
+          className="role-pill-btn"
+          style={{
+            cursor: "pointer",
+            background: isAdminScreen ? "var(--canvas)" : "rgba(12, 74, 52, 0.15)",
+            border: "1px solid var(--border)",
+            borderRadius: "20px",
+            padding: "4px 10px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            fontSize: "0.8rem",
+            fontWeight: 600,
+            color: "var(--primary)",
+          }}
+          onClick={() => go(isAdminScreen ? "dashboard" : "admin")}
+          title={isAdminScreen ? "Switch to Student View" : "Open Admin Console"}
+        >
+          <Icon name={isAdminScreen ? "book" : "shield"} size={14}/>
+          <span>{isAdminScreen ? "Student View" : "Admin Console"}</span>
+        </button>
       )}
       <button className="language">EN <span>⌄</span></button>
       <button className="icon-button" onClick={() => go("notifications")} aria-label="Notifications">
@@ -177,6 +198,16 @@ function Header({
       >
         {initials}
       </button>
+      {onLogout && (
+        <button
+          className="icon-button"
+          onClick={onLogout}
+          aria-label="Log out of session"
+          title="Log out of session"
+        >
+          <Icon name="logout"/>
+        </button>
+      )}
     </div>
   </header>;
 }
@@ -188,6 +219,7 @@ function Shell({
   currentUser,
   pendingPaymentsCount = 0,
   unreadNotifsCount = 0,
+  onLogout,
 }: {
   screen: Screen;
   go: (s: Screen) => void;
@@ -195,10 +227,12 @@ function Shell({
   currentUser: UserSession;
   pendingPaymentsCount?: number;
   unreadNotifsCount?: number;
+  onLogout?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const isAdminScreen = ["admin","structure","papers","contributions","paper-requests","admin-payments","users","audit","settings","components","tokens"].includes(screen);
   
+  const isStaff = currentUser.role !== "STUDENT";
   const isContentManager = currentUser.role === "CONTENT_MANAGER";
   const isPaymentVerifier = currentUser.role === "PAYMENT_VERIFIER";
 
@@ -219,7 +253,14 @@ function Shell({
   const effectivePendingCount = isContentManager ? 0 : pendingPaymentsCount;
 
   return <div className="app-shell">
-    <Header go={go} currentUser={currentUser} onMenu={() => setOpen(!open)} pendingCount={effectivePendingCount}/>
+    <Header
+      go={go}
+      currentUser={currentUser}
+      onMenu={() => setOpen(!open)}
+      pendingCount={effectivePendingCount}
+      isAdminScreen={isAdminScreen}
+      onLogout={onLogout}
+    />
     <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
       <div className="mobile-side-head"><Logo/><Button variant="ghost" onClick={() => setOpen(false)}><Icon name="close"/></Button></div>
       <div className="side-context">
@@ -237,6 +278,25 @@ function Shell({
         )}
       </div>
       <nav>
+        {isStaff && (
+          <div style={{ padding: "0 8px 8px 8px", borderBottom: "1px solid var(--line)", marginBottom: "8px" }}>
+            <button
+              className="nav-item"
+              style={{
+                background: isAdminScreen ? "var(--canvas)" : "rgba(12, 74, 52, 0.12)",
+                color: "var(--primary)",
+                fontWeight: 700,
+                border: "1px solid var(--line)",
+                width: "100%",
+                justifyContent: "flex-start",
+              }}
+              onClick={() => { go(isAdminScreen ? "dashboard" : "admin"); setOpen(false); }}
+            >
+              <Icon name={isAdminScreen ? "book" : "shield"}/>
+              <span>{isAdminScreen ? "← Student Portal View" : "⚡ Switch to Admin Console"}</span>
+            </button>
+          </div>
+        )}
         {nav.map(([id, icon, label]) => (
           <button key={id} className={`nav-item ${screen === id ? "active" : ""}`} onClick={() => { go(id); setOpen(false); }}>
             <Icon name={icon}/>
@@ -247,7 +307,7 @@ function Shell({
         ))}
       </nav>
       <div className="side-bottom">
-        <button className="nav-item" onClick={() => go("landing")}>
+        <button className="nav-item" onClick={onLogout || (() => go("landing"))}>
           <Icon name="logout"/><span>Log out</span>
         </button>
         <small>{theme.constants.appName} v1.0 · Ambo Uni</small>
@@ -389,7 +449,13 @@ function Landing({ go }: { go: (s: Screen) => void }) {
     <footer>
       <Logo/>
       <p>Past papers, organized for better preparation.</p>
-      <div><button onClick={() => go("help")}>Help</button><button onClick={() => go("privacy")}>Privacy</button><button onClick={() => go("terms")}>Terms</button><button onClick={() => go("contact")}>Contact</button></div>
+      <div>
+        <button onClick={() => go("help")}>Help</button>
+        <button onClick={() => go("privacy")}>Privacy</button>
+        <button onClick={() => go("terms")}>Terms</button>
+        <button onClick={() => go("contact")}>Contact</button>
+        <button onClick={() => go("admin-login")} style={{ fontWeight: 600, color: "var(--primary)" }}>Staff Portal</button>
+      </div>
       <small>© 2026 ExamVault · Ambo University, Woliso Campus</small>
     </footer>
   </div>;
@@ -441,7 +507,7 @@ function Auth({
         });
 
         const userSession: UserSession = {
-          userId: res.user.id,
+          userId: res.user.userId || res.user.id,
           fullName: res.user.fullName,
           email: res.user.email || null,
           phone: res.user.phone || null,
@@ -465,7 +531,7 @@ function Auth({
         });
 
         const userSession: UserSession = {
-          userId: res.user.id,
+          userId: res.user.userId || res.user.id,
           fullName: res.user.fullName,
           email: res.user.email || null,
           phone: res.user.phone || null,
@@ -560,13 +626,34 @@ function Auth({
           </Button>
         </form>
 
-        {!admin && (
-          <p className="auth-switch">
-            {signup ? "Already have an account?" : "New to ExamVault?"}{" "}
-            <button onClick={() => { setError(null); go(signup ? "login" : "signup"); }}>
-              {signup ? "Log in" : "Create an account"}
+        {!admin ? (
+          <>
+            <p className="auth-switch">
+              {signup ? "Already have an account?" : "New to ExamVault?"}{" "}
+              <button onClick={() => { setError(null); go(signup ? "login" : "signup"); }}>
+                {signup ? "Log in" : "Create an account"}
+              </button>
+            </p>
+            <div style={{ textAlign: "center", marginTop: "14px", paddingTop: "12px", borderTop: "1px solid var(--line)" }}>
+              <button
+                type="button"
+                style={{ background: "none", border: "none", color: "var(--primary)", fontSize: "0.85rem", cursor: "pointer", fontWeight: 600 }}
+                onClick={() => { setError(null); go("admin-login"); }}
+              >
+                🔐 Staff & Verifier Sign In →
+              </button>
+            </div>
+          </>
+        ) : (
+          <div style={{ textAlign: "center", marginTop: "16px", paddingTop: "12px", borderTop: "1px solid var(--line)" }}>
+            <button
+              type="button"
+              style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "0.85rem", cursor: "pointer" }}
+              onClick={() => { setError(null); go("login"); }}
+            >
+              ← Return to Student Sign In
             </button>
-          </p>
+          </div>
         )}
       </Card>
     </div>
@@ -1509,12 +1596,22 @@ function Checkout({
             <Button className="full" onClick={() => go("semester")}>Open my semester</Button>
           ) : (
             <>
-              <Button className="full" onClick={() => go("admin-payments")}>
-                Go to Admin Verification Queue to Approve <Icon name="arrow"/>
-              </Button>
-              <Button variant="secondary" className="full" onClick={() => go("dashboard")}>
+              <Button className="full" onClick={() => go("dashboard")}>
                 Go to student dashboard
               </Button>
+              <Button variant="secondary" className="full" onClick={() => go("payments")}>
+                View in Payment History & Receipts
+              </Button>
+              {(currentUser.role === "ADMIN" || currentUser.role === "PAYMENT_VERIFIER") && (
+                <div style={{ marginTop: "12px", padding: "12px", background: "rgba(12, 74, 52, 0.08)", borderRadius: "8px", textAlign: "center", border: "1px dashed var(--primary)" }}>
+                  <small style={{ display: "block", color: "var(--primary)", fontWeight: 600, marginBottom: "8px" }}>
+                    Staff Account ({currentUser.role}):
+                  </small>
+                  <Button variant="secondary" className="full" onClick={() => go("admin-payments")}>
+                    Open Verification Queue (Admin) <Icon name="arrow"/>
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -2126,7 +2223,7 @@ function Requests({
   </>;
 }
 
-function Profile({ currentUser, onLogout }: { currentUser: UserSession; onLogout: () => void }) {
+function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLogout: () => void; go: (s: Screen) => void }) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwdMsg, setPwdMsg] = useState<{ text: string; tone: "success" | "danger" } | null>(null);
@@ -2169,7 +2266,15 @@ function Profile({ currentUser, onLogout }: { currentUser: UserSession; onLogout
         <span>ID: {currentUser.studentId || "AMU-STUDENT"}</span>
         <span>Woliso Campus · Ambo University</span>
 
-        <div style={{ marginTop: "24px", width: "100%" }}>
+        {currentUser.role !== "STUDENT" && (
+          <div style={{ marginTop: "16px", width: "100%" }}>
+            <Button className="full" icon="shield" onClick={() => go("admin")}>
+              Open Admin Console
+            </Button>
+          </div>
+        )}
+
+        <div style={{ marginTop: "16px", width: "100%" }}>
           <Button variant="danger" className="full" icon="logout" onClick={onLogout}>
             Log Out of Session
           </Button>
@@ -2961,7 +3066,7 @@ export default function App() {
         if (meRes.user) {
           const stream = (meRes.user.program?.code as StreamCode) || "NAT_SCI";
           const sess: UserSession = {
-            userId: meRes.user.id,
+            userId: meRes.user.userId || meRes.user.id,
             fullName: meRes.user.fullName,
             email: meRes.user.email || "",
             phone: meRes.user.phone || "",
@@ -2999,7 +3104,7 @@ export default function App() {
 
     try {
       const created = await api.submitPayment({
-        userId: currentUser.userId,
+        userId: currentUser.userId || (currentUser as any).id,
         stream: selectedStream,
         method: p.method,
         txId: p.txId,
@@ -3303,7 +3408,7 @@ export default function App() {
 
   if (currentUser.role === "CONTENT_MANAGER" && (screen === "admin-payments" || screen === "users")) {
     return (
-      <Shell screen={screen} go={go} currentUser={currentUser}>
+      <Shell screen={screen} go={go} currentUser={currentUser} onLogout={handleLogout}>
         <AccessDenied
           title="Access Restricted for Content Managers"
           message="Content Managers do not have permissions to view student payments or administrative user roles."
@@ -3315,7 +3420,7 @@ export default function App() {
 
   if (currentUser.role === "PAYMENT_VERIFIER" && (screen === "structure" || screen === "papers")) {
     return (
-      <Shell screen={screen} go={go} currentUser={currentUser}>
+      <Shell screen={screen} go={go} currentUser={currentUser} onLogout={handleLogout}>
         <AccessDenied
           title="Access Restricted for Payment Verifiers"
           message="Payment Verifiers do not have permission to view or modify freshman curriculum structure or exam papers."
@@ -3375,7 +3480,7 @@ export default function App() {
         onSubmitRequest={() => {}}
       />
     ) :
-    screen === "profile" ? <Profile currentUser={currentUser} onLogout={handleLogout}/> :
+    screen === "profile" ? <Profile currentUser={currentUser} onLogout={handleLogout} go={go}/> :
     screen === "notifications" ? <Notifications notifications={notifications}/> :
     screen === "help" ? <Help/> :
     screen === "admin" ? (
@@ -3461,6 +3566,7 @@ export default function App() {
         currentUser={currentUser}
         pendingPaymentsCount={pendingPaymentsCount}
         unreadNotifsCount={notifications.filter(n => !n.read).length}
+        onLogout={handleLogout}
       >
         {content}
       </Shell>
