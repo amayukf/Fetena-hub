@@ -101,6 +101,7 @@ model User {
   isActive        Boolean        @default(true)
   isVerified      Boolean        @default(false)
   canSell         Boolean        @default(true) // User permission to sell papers to admin
+  mustChangePassword Boolean     @default(false) // Forced password change upon first login
   avatarUrl       String?
   
   deletedAt       DateTime?      // Soft delete
@@ -530,4 +531,14 @@ model PaperViewLog {
 
   @@index([examPaperId])
   @@index([userId])
+}
+
+model RateLimit {
+  key       String   @id
+  points    Int      @default(0)
+  expireAt  DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([expireAt])
 }

@@ -422,4 +422,99 @@ export const api = {
     }
     return json;
   },
+
+  async signup(data: {
+    fullName: string;
+    email?: string;
+    phone?: string;
+    studentId?: string;
+    stream?: StreamCode;
+    password: string;
+  }) {
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || 'Registration failed');
+    }
+    return json;
+  },
+
+  async login(data: { identifier: string; password: string }) {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || 'Sign in failed');
+    }
+    return json;
+  },
+
+  async getMe() {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) return { authenticated: false, user: null, unlockedProgramTermIds: [] };
+    return res.json();
+  },
+
+  async logout() {
+    const res = await fetch('/api/auth/logout', { method: 'POST' });
+    return res.json();
+  },
+
+  async changePassword(data: { oldPassword?: string; newPassword: string; userId?: string }) {
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || 'Password update failed');
+    }
+    return json;
+  },
+
+  async getMyContributions() {
+    const res = await fetch('/api/contributions/my');
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Failed to fetch contributions');
+    return json;
+  },
+
+  async reviewContribution(contributionId: string, data: { action: string; approvedPayoutEtb?: number; counterOfferEtb?: number; reason?: string }) {
+    const res = await fetch(`/api/contributions/${contributionId}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Failed to review contribution');
+    return json;
+  },
+
+  async publishContribution(contributionId: string) {
+    const res = await fetch(`/api/contributions/${contributionId}/publish`, {
+      method: 'POST',
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Failed to publish contribution');
+    return json;
+  },
+
+  async payoutContribution(contributionId: string, payoutTxId: string) {
+    const res = await fetch(`/api/contributions/${contributionId}/payout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payoutTxId }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Failed to disburse payout');
+    return json;
+  },
 };

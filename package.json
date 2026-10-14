@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "format": "oxfmt",
     "test": "vitest run --fileParallelism=false",
-    "test:integration": "vitest run tests/integration-database.test.ts"
+    "test:integration": "vitest run tests/integration-database.test.ts",
+    "seed": "tsx prisma/seed.ts",
+    "seed:dev": "tsx prisma/seedDev.ts",
+    "create-admin": "tsx scripts/createAdmin.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1151.0",
@@ -37,5 +40,8 @@
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2"
   }
 }

@@ -33,6 +33,7 @@ import WantedPapersManager from "./components/admin/WantedPapersManager";
 import UsersManager from "./components/admin/UsersManager";
 import AuditLogViewer from "./components/admin/AuditLogViewer";
 import SettingsManager from "./components/admin/SettingsManager";
+import { TermsPage, PrivacyPage, ContactPage, ForbiddenPage, NotFoundPage, ForcePasswordChangeModal } from "./components/LegalPages";
 
 const isDev = import.meta.env.DEV || (typeof process !== "undefined" && process.env?.NODE_ENV === "development");
 
@@ -42,7 +43,8 @@ export type Screen =
   | "semester" | "course" | "viewer" | "checkout" | "payments" | "requests"
   | "profile" | "notifications" | "help" | "admin-login" | "admin"
   | "structure" | "papers" | "contributions" | "paper-requests"
-  | "admin-payments" | "users" | "audit" | "settings" | "components" | "tokens";
+  | "admin-payments" | "users" | "audit" | "settings" | "components" | "tokens"
+  | "terms" | "privacy" | "contact" | "forbidden" | "not-found";
 
 export type IconName =
   | "vault" | "home" | "search" | "book" | "card" | "bell" | "user" | "help"
@@ -140,13 +142,11 @@ const adminNav: Array<[Screen, IconName, string]> = [
 function Header({
   go,
   currentUser,
-  onOpenRoleSwitcher,
   onMenu,
   pendingCount = 0,
 }: {
   go: (s: Screen) => void;
   currentUser: UserSession;
-  onOpenRoleSwitcher?: () => void;
   onMenu?: () => void;
   pendingCount?: number;
 }) {
@@ -159,18 +159,12 @@ function Header({
       <div style={{ cursor: "pointer" }} onClick={() => go("landing")}><Logo/></div>
     </div>
     <div className="topbar-actions">
-      {isDev && onOpenRoleSwitcher ? (
-        <button className="role-pill-btn" onClick={onOpenRoleSwitcher} title="Click to test different roles (Development Mode)">
-          <Icon name="shield" size={14}/>
-          <span>{currentUser.role.replace("_", " ")}</span>
-          <span style={{ opacity: 0.6 }}>▾</span>
-        </button>
-      ) : isStaff ? (
+      {isStaff && (
         <span className="role-pill-btn" style={{ cursor: "default", opacity: 0.9 }}>
           <Icon name="shield" size={14}/>
           <span>{currentUser.role.replace("_", " ")}</span>
         </span>
-      ) : null}
+      )}
       <button className="language">EN <span>⌄</span></button>
       <button className="icon-button" onClick={() => go("notifications")} aria-label="Notifications">
         <Icon name="bell"/>
@@ -178,7 +172,7 @@ function Header({
       </button>
       <button
         className="avatar"
-        onClick={isDev && onOpenRoleSwitcher ? onOpenRoleSwitcher : () => go("profile")}
+        onClick={() => go("profile")}
         title={`${currentUser.fullName} (${currentUser.role})`}
       >
         {initials}
@@ -192,7 +186,6 @@ function Shell({
   go,
   children,
   currentUser,
-  onOpenRoleSwitcher,
   pendingPaymentsCount = 0,
   unreadNotifsCount = 0,
 }: {
@@ -200,7 +193,6 @@ function Shell({
   go: (s: Screen) => void;
   children: ReactNode;
   currentUser: UserSession;
-  onOpenRoleSwitcher?: () => void;
   pendingPaymentsCount?: number;
   unreadNotifsCount?: number;
 }) {
@@ -227,7 +219,7 @@ function Shell({
   const effectivePendingCount = isContentManager ? 0 : pendingPaymentsCount;
 
   return <div className="app-shell">
-    <Header go={go} currentUser={currentUser} onOpenRoleSwitcher={isDev ? onOpenRoleSwitcher : undefined} onMenu={() => setOpen(!open)} pendingCount={effectivePendingCount}/>
+    <Header go={go} currentUser={currentUser} onMenu={() => setOpen(!open)} pendingCount={effectivePendingCount}/>
     <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
       <div className="mobile-side-head"><Logo/><Button variant="ghost" onClick={() => setOpen(false)}><Icon name="close"/></Button></div>
       <div className="side-context">
@@ -397,30 +389,106 @@ function Landing({ go }: { go: (s: Screen) => void }) {
     <footer>
       <Logo/>
       <p>Past papers, organized for better preparation.</p>
-      <div><button onClick={() => go("help")}>Help</button><button>Privacy</button><button>Terms</button></div>
+      <div><button onClick={() => go("help")}>Help</button><button onClick={() => go("privacy")}>Privacy</button><button onClick={() => go("terms")}>Terms</button><button onClick={() => go("contact")}>Contact</button></div>
       <small>© 2026 ExamVault · Ambo University, Woliso Campus</small>
     </footer>
   </div>;
 }
 
-function Auth({ mode, go, onLogin }: { mode: "login" | "signup" | "verify" | "admin"; go: (s: Screen) => void; onLogin: (role: "STUDENT" | "ADMIN") => void }) {
-  const signup = mode === "signup", verify = mode === "verify", admin = mode === "admin";
+function Auth({
+  mode,
+  go,
+  onAuthSuccess,
+}: {
+  mode: "login" | "signup" | "verify" | "admin";
+  go: (s: Screen) => void;
+  onAuthSuccess: (user: UserSession, mustChangePassword?: boolean) => void;
+}) {
+  const signup = mode === "signup", admin = mode === "admin";
+  const [fullName, setFullName] = useState("");
   const [identifier, setIdentifier] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [stream, setStream] = useState<StreamCode>("NAT_SCI");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (admin) {
-      onLogin("ADMIN");
-      go("admin");
-    } else if (verify) {
-      onLogin("STUDENT");
-      go("dashboard");
-    } else if (signup) {
-      go("verify");
-    } else {
-      onLogin("STUDENT");
-      go("dashboard");
+    setError(null);
+    setLoading(true);
+
+    try {
+      if (signup) {
+        if (!fullName.trim() || fullName.trim().length < 2) {
+          throw new Error("Please enter your full legal name.");
+        }
+        if (!identifier.trim()) {
+          throw new Error("Phone number or email is required.");
+        }
+        if (!password || password.length < 8) {
+          throw new Error("Password must be at least 8 characters long.");
+        }
+
+        const isEmail = identifier.includes("@");
+        const res = await api.signup({
+          fullName: fullName.trim(),
+          email: isEmail ? identifier.trim() : undefined,
+          phone: !isEmail ? identifier.trim() : undefined,
+          studentId: studentId.trim() || undefined,
+          stream,
+          password,
+        });
+
+        const userSession: UserSession = {
+          userId: res.user.id,
+          fullName: res.user.fullName,
+          email: res.user.email || null,
+          phone: res.user.phone || null,
+          role: res.user.role as Role,
+          programId: res.user.programId || null,
+          studentId: res.user.studentId || null,
+          stream,
+          currentYear: res.user.currentYear || 1,
+        };
+
+        onAuthSuccess(userSession, false);
+        go("dashboard");
+      } else {
+        if (!identifier.trim() || !password) {
+          throw new Error("Please enter your credentials.");
+        }
+
+        const res = await api.login({
+          identifier: identifier.trim(),
+          password,
+        });
+
+        const userSession: UserSession = {
+          userId: res.user.id,
+          fullName: res.user.fullName,
+          email: res.user.email || null,
+          phone: res.user.phone || null,
+          role: res.user.role as Role,
+          programId: res.user.programId || null,
+          studentId: res.user.studentId || null,
+          stream: (res.user.program?.code as StreamCode) || "NAT_SCI",
+          currentYear: res.user.currentYear || 1,
+          mustChangePassword: res.mustChangePassword,
+        };
+
+        onAuthSuccess(userSession, res.mustChangePassword);
+
+        if (res.user.role !== "STUDENT") {
+          go("admin");
+        } else {
+          go("dashboard");
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || "Authentication failed. Please check credentials.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -438,49 +506,66 @@ function Auth({ mode, go, onLogin }: { mode: "login" | "signup" | "verify" | "ad
       <div className="auth-mobile-logo"><Logo/></div>
       <Card>
         <button className="back-link" onClick={() => go("landing")}>← Back to home</button>
-        <Heading level={2}>{verify ? "Verify your account" : signup ? "Create your account" : admin ? "Admin sign in" : "Welcome back"}</Heading>
-        <p>{verify ? "We sent a 6-digit code to your phone (+251 91•••4821)." : signup ? "Join other Ambo University students preparing with confidence." : "Enter your credentials to continue to ExamVault."}</p>
+        <Heading level={2}>{signup ? "Create your student account" : admin ? "Admin sign in" : "Welcome back"}</Heading>
+        <p>{signup ? "Join Woliso Campus students preparing for Freshman examinations." : "Enter your credentials to continue to ExamVault."}</p>
+
+        {error && (
+          <div className="alert danger" style={{ margin: "14px 0" }}>
+            <span>{error}</span>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit}>
-          {verify ? (
-            <>
-              <Input label="Verification code" placeholder="0  0  0  0  0  0"/>
-              <p className="form-note">Didn't receive a code? <button type="button">Resend in 00:42</button></p>
-            </>
-          ) : (
-            <>
-              {signup && <Input label="Full name" placeholder="e.g. Abenezer Bekele"/>}
-              <Input label="Phone number or email" placeholder={signup ? "+251 9..." : "Enter phone or email"} value={identifier} onChange={e => setIdentifier(e.target.value)}/>
-              {signup && (
-                <div className="form-grid">
-                  <Select label="Department">
-                    <option>Information Technology</option>
-                    <option>Computer Science</option>
-                    <option>Civil Engineering</option>
-                  </Select>
-                  <Select label="Current year">
-                    <option>3rd year</option>
-                    <option>2nd year</option>
-                    <option>4th year</option>
-                  </Select>
-                </div>
-              )}
-              <Input label="Password" placeholder="At least 8 characters" type="password" value={password} onChange={e => setPassword(e.target.value)}/>
-              {!signup && !admin && (
-                <div className="form-row">
-                  <label><input type="checkbox" defaultChecked/> Remember me</label>
-                  <button type="button" onClick={() => alert("Password reset instructions sent to registered phone.")}>Forgot password?</button>
-                </div>
-              )}
-            </>
+          {signup && (
+            <Input
+              label="Full name"
+              placeholder="e.g. Student Full Name"
+              value={fullName}
+              onChange={e => setFullName(e.target.value)}
+            />
           )}
-          <Button type="submit" className="full">
-            {verify ? "Verify and continue" : signup ? "Create account" : admin ? "Sign in to Admin Console" : "Sign in"}
+
+          <Input
+            label="Phone number or email"
+            placeholder={signup ? "+251 9... or student@amu.edu.et" : "Enter phone or email"}
+            value={identifier}
+            onChange={e => setIdentifier(e.target.value)}
+          />
+
+          {signup && (
+            <div className="form-grid">
+              <Select label="Curriculum Stream" value={stream} onChange={e => setStream(e.target.value as StreamCode)}>
+                <option value="NAT_SCI">Natural Science Stream</option>
+                <option value="SOC_SCI">Social Science Stream</option>
+              </Select>
+              <Input
+                label="Student ID (Optional)"
+                placeholder="e.g. AMU-2026-0042"
+                value={studentId}
+                onChange={e => setStudentId(e.target.value)}
+              />
+            </div>
+          )}
+
+          <Input
+            label="Password"
+            placeholder="At least 8 characters"
+            type="password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+          />
+
+          <Button type="submit" className="full" disabled={loading} style={{ marginTop: "12px" }}>
+            {loading ? "Please wait..." : signup ? "Create account" : admin ? "Sign in to Admin Console" : "Sign in"}
           </Button>
         </form>
-        {!verify && !admin && (
+
+        {!admin && (
           <p className="auth-switch">
             {signup ? "Already have an account?" : "New to ExamVault?"}{" "}
-            <button onClick={() => go(signup ? "login" : "signup")}>{signup ? "Log in" : "Create an account"}</button>
+            <button onClick={() => { setError(null); go(signup ? "login" : "signup"); }}>
+              {signup ? "Log in" : "Create an account"}
+            </button>
           </p>
         )}
       </Card>
@@ -1482,6 +1567,17 @@ function Checkout({
 
           <Card style={{ marginTop: "16px" }}>
             <Heading level={2}>2. Payment instructions</Heading>
+            {!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim() && (
+              <div className="alert warning" style={{ marginBottom: "14px", background: "#fffbeb", border: "1px solid #f59e0b", color: "#b45309" }}>
+                <Icon name="shield" size={20}/>
+                <span>
+                  <strong>Checkout Blocked — Payment Accounts Not Yet Configured:</strong>
+                  <p style={{ margin: "4px 0 0", fontSize: "0.85rem" }}>
+                    The campus administration has not set up active Telebirr or CBE account numbers in Platform Settings. Manual payment submission is temporarily blocked until account details are filled by an administrator.
+                  </p>
+                </span>
+              </div>
+            )}
             <div className="alert info" style={{ marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px", background: "rgba(12, 74, 52, 0.08)", color: "var(--primary)" }}>
               <Icon name="clock" size={18}/>
               <span>
@@ -1492,18 +1588,18 @@ function Checkout({
               <strong>Transfer {settings.semesterPriceEtb || 50} ETB to Ambo University Woliso Campus</strong>
               {method === "TELEBIRR" ? (
                 <>
-                  <span>Telebirr receiver number: <b>{settings.telebirrPhone}</b></span>
-                  <span>Recipient name: <b>{settings.telebirrRecipientName}</b></span>
+                  <span>Telebirr receiver number: <b>{settings.telebirrPhone?.trim() || "[Admin: Set TELEBIRR_RECEIVER_PHONE in Settings]"}</b></span>
+                  <span>Recipient name: <b>{settings.telebirrRecipientName?.trim() || "Ambo University Woliso Campus"}</b></span>
                 </>
               ) : method === "CBE_BIRR" ? (
                 <>
-                  <span>CBE account number: <b>{settings.cbeAccountNumber}</b></span>
-                  <span>Account name: <b>{settings.cbeRecipientName}</b></span>
+                  <span>CBE account number: <b>{settings.cbeAccountNumber?.trim() || "[Admin: Set CBE_ACCOUNT_NUMBER in Settings]"}</b></span>
+                  <span>Account name: <b>{settings.cbeRecipientName?.trim() || "Ambo University Woliso Campus"}</b></span>
                 </>
               ) : (
                 <>
                   <span>Bank: <b>Commercial Bank of Ethiopia (CBE)</b></span>
-                  <span>Account: <b>{settings.cbeAccountNumber}</b></span>
+                  <span>Account: <b>{settings.cbeAccountNumber?.trim() || "[Admin: Set CBE_ACCOUNT_NUMBER in Settings]"}</b></span>
                 </>
               )}
             </div>
@@ -1513,20 +1609,22 @@ function Checkout({
               placeholder="e.g. TB4F8K92 or CBE778942"
               value={txId}
               onChange={e => setTxId(e.target.value)}
+              disabled={!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()}
             />
 
-            <div className="upload-box" style={{ cursor: "pointer" }} onClick={() => fileInputRef.current?.click()}>
+            <div className="upload-box" style={{ cursor: (!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()) ? "not-allowed" : "pointer", opacity: (!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()) ? 0.6 : 1 }} onClick={() => { if (settings.telebirrPhone?.trim() || settings.cbeAccountNumber?.trim()) fileInputRef.current?.click(); }}>
               <input
                 type="file"
                 ref={fileInputRef.current ? undefined : fileInputRef}
                 style={{ display: "none" }}
                 accept="image/png,image/jpeg"
                 onChange={handleFileChange}
+                disabled={!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()}
               />
               <Icon name="image" size={32}/>
               <strong>Upload payment receipt screenshot</strong>
               <small>{screenshotName} (PNG or JPG, up to 5 MB)</small>
-              <Button variant="secondary" onClick={() => fileInputRef.current?.click()}>
+              <Button variant="secondary" disabled={!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()} onClick={() => fileInputRef.current?.click()}>
                 Choose screenshot
               </Button>
             </div>
@@ -1545,7 +1643,12 @@ function Checkout({
               </div>
             )}
 
-            <Button type="submit" className="full">
+            <Button
+              type="submit"
+              className="full"
+              disabled={!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()}
+              title={(!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()) ? "Checkout blocked until payment accounts are set in settings" : undefined}
+            >
               {rejectedPayment ? `Resubmit for verification (Attempt #${(rejectedPayment.resubmitCount || 0) + 1})` : "Submit for verification"}
             </Button>
           </Card>
@@ -1762,6 +1865,8 @@ function Requests({
     payoutMethod: PaymentMethod;
     proposedPayout: number;
     notes: string;
+    fileBase64?: string;
+    fileName?: string;
   }) => void;
   onSubmitRequest: (course: string, type: string, year: string, note: string) => void;
 }) {
@@ -1769,24 +1874,53 @@ function Requests({
   const [selectedCourseCode, setSelectedCourseCode] = useState(FRESHMAN_11_COURSES[0].code);
   const [examType, setExamType] = useState<"FINAL" | "MID" | "QUIZ">("FINAL");
   const [examYear, setExamYear] = useState("2023");
-  const [examDate, setExamDate] = useState("2023-06-15");
-  const [declarationAccepted, setDeclarationAccepted] = useState(false);
+  const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+  const [examDate, setExamDate] = useState(yesterdayStr);
+  const [declPastSemester, setDeclPastSemester] = useState(false);
+  const [declAuthorized, setDeclAuthorized] = useState(false);
+  const [declLegible, setDeclLegible] = useState(false);
   const [payoutMethod, setPayoutMethod] = useState<PaymentMethod>("TELEBIRR");
-  const [payoutAccount, setPayoutAccount] = useState("0900 000 042");
+  const [payoutAccount, setPayoutAccount] = useState(currentUser.phone || "");
   const [proposedPayout, setProposedPayout] = useState("100");
   const [notes, setNotes] = useState("");
+  const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
+  const [attachedBase64, setAttachedBase64] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submittedMessage, setSubmittedMessage] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 20 * 1024 * 1024) {
+        setError("File size exceeds 20 MB limit.");
+        return;
+      }
+      setAttachedFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = reader.result as string;
+        const base64 = res.split(",")[1] || res;
+        setAttachedBase64(base64);
+        setError(null);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleSellSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!declarationAccepted) {
-      setError("You must accept the honor declaration to submit a paper.");
+    if (!declPastSemester || !declAuthorized || !declLegible) {
+      setError("All three mandatory honor declarations must be accepted before submitting.");
       return;
     }
     const todayStr = new Date().toISOString().split("T")[0];
     if (examDate >= todayStr) {
-      setError("Exam administration date must be strictly in the past (< today).");
+      setError("Exam administration date must be strictly in the past (< today). Future or today's exams cannot be accepted.");
+      return;
+    }
+    if (!payoutAccount.trim()) {
+      setError("Please provide your Telebirr or CBE account number to receive your payout.");
       return;
     }
     setError(null);
@@ -1800,21 +1934,29 @@ function Requests({
       year: parseInt(examYear) || 2023,
       examDate,
       declarationAccepted: true,
-      payoutAccount,
+      payoutAccount: payoutAccount.trim(),
       payoutMethod,
       proposedPayout: parseFloat(proposedPayout) || 50,
       notes,
+      fileBase64: attachedBase64 || undefined,
+      fileName: attachedFileName || undefined,
     });
     setSubmittedMessage("Your paper has been submitted! Admin will inspect scan clarity and settle your payout.");
     setTab("status");
   };
 
+  const mySubmissions = contributions.filter(c => c.studentId === currentUser.userId);
+  const totalSettledEarnings = mySubmissions
+    .filter(c => c.status === "PAID" || c.status === "PAID_OUT")
+    .reduce((sum, c) => sum + (c.approvedPayoutEtb || 0), 0);
+  const pendingEvaluation = mySubmissions.filter(c => c.status !== "PAID" && c.status !== "PAID_OUT" && c.status !== "REJECTED").length;
+
   return <>
-    <PageHead eyebrow="COMMUNITY LIBRARY" title="Requests & contributions" text="Sell exam papers you hold to the admin, or request missing papers."/>
+    <PageHead eyebrow="COMMUNITY ARCHIVE" title="Requests & contributions" text="Sell exam papers you hold to the admin, or request missing papers."/>
     <div className="tabs">
       <button className={tab === "request" ? "active" : ""} onClick={() => setTab("request")}>Request a paper</button>
       <button className={tab === "upload" ? "active" : ""} onClick={() => setTab("upload")}>Sell a paper to Admin</button>
-      <button className={tab === "status" ? "active" : ""} onClick={() => setTab("status")}>My submissions ({contributions.length})</button>
+      <button className={tab === "status" ? "active" : ""} onClick={() => setTab("status")}>My submissions ({mySubmissions.length})</button>
     </div>
 
     {submittedMessage && (
@@ -1841,26 +1983,35 @@ function Requests({
                 <option key={c.code} value={c.code}>{c.code} — {c.title}</option>
               ))}
             </Select>
-            <Select label="Paper type"><option>Final exam</option><option>Mid exam</option></Select>
+            <Select label="Paper type"><option>Final exam</option><option>Mid exam</option><option>Quiz</option></Select>
           </div>
           <Select label="Exam year"><option>2023</option><option>2022</option><option>2021</option></Select>
           <label className="field"><span>Additional notes (optional)</span><textarea placeholder="e.g. Need the morning session exam..."/></label>
-          <Button onClick={() => { setSubmittedMessage("Paper request registered."); }}>Send request</Button>
+          <Button onClick={() => { setSubmittedMessage("Paper request registered with Woliso Campus moderators."); }}>Send request</Button>
         </>
       ) : tab === "upload" ? (
         <form onSubmit={handleSellSubmit}>
           <Heading level={2}>Sell an exam paper to ExamVault Admin</Heading>
           <p>We purchase clear mid and final exams from students. Once verified, payout is sent directly to your Telebirr or CBE account.</p>
 
-          <div className="upload-box large">
+          <div className="upload-box large" style={{ cursor: "pointer" }} onClick={() => fileRef.current?.click()}>
+            <input
+              type="file"
+              ref={fileRef}
+              style={{ display: "none" }}
+              accept="application/pdf,image/png,image/jpeg"
+              onChange={handleFile}
+            />
             <Icon name="upload" size={32}/>
-            <strong>Drop PDF or photos of the exam paper here</strong>
+            <strong>{attachedFileName ? `Attached: ${attachedFileName}` : "Drop PDF or photos of the exam paper here"}</strong>
             <small>PDF, JPG, or PNG · Maximum 20 MB · Clear legible text</small>
-            <Button variant="secondary" onClick={() => alert("Exam file attached.")}>Attach paper files</Button>
+            <Button variant="secondary" onClick={() => fileRef.current?.click()}>
+              {attachedFileName ? "Replace paper file" : "Choose paper file"}
+            </Button>
           </div>
 
           <div className="form-grid">
-            <Select label="Course" value={selectedCourseCode} onChange={e => setSelectedCourseCode(e.target.value)}>
+            <Select label="Course (11 Freshman Courses)" value={selectedCourseCode} onChange={e => setSelectedCourseCode(e.target.value)}>
               {FRESHMAN_11_COURSES.map(c => (
                 <option key={c.code} value={c.code}>{c.code} — {c.title} {c.isShared ? "(Shared)" : ""}</option>
               ))}
@@ -1875,93 +2026,209 @@ function Requests({
           <div className="form-grid">
             <Input
               type="date"
-              label="Exam administration date (Must be in the past)"
+              label="Exam administration date (Strictly in the past)"
               placeholder="YYYY-MM-DD"
               value={examDate}
               onChange={e => setExamDate(e.target.value)}
             />
-            <Input label="Proposed buyout payout (ETB)" placeholder="e.g. 80" value={proposedPayout} onChange={e => setProposedPayout(e.target.value)}/>
+            <Input label="Proposed buyout payout (ETB)" placeholder="e.g. 100" value={proposedPayout} onChange={e => setProposedPayout(e.target.value)}/>
           </div>
 
           <div className="form-grid">
             <Select label="Payout wallet / bank" value={payoutMethod} onChange={e => setPayoutMethod(e.target.value as any)}>
-              <option value="TELEBIRR">Telebirr</option>
+              <option value="TELEBIRR">Telebirr Mobile Money</option>
               <option value="CBE_BIRR">CBE Birr</option>
             </Select>
-            <Input label="Your phone / CBE account for payout" placeholder="+251 9... or 1000..." value={payoutAccount} onChange={e => setPayoutAccount(e.target.value)}/>
+            <Input label="Your phone / CBE account for payout" placeholder="09... or 1000..." value={payoutAccount} onChange={e => setPayoutAccount(e.target.value)}/>
           </div>
 
-          <label className="field"><span>Notes about scan quality</span><textarea placeholder="e.g. Complete questions with marking schemes..." value={notes} onChange={e => setNotes(e.target.value)}/></label>
+          <label className="field"><span>Notes about scan quality or questions</span><textarea placeholder="e.g. Complete questions with full legible handwriting..." value={notes} onChange={e => setNotes(e.target.value)}/></label>
 
-          <label style={{ display: "flex", gap: "10px", alignItems: "flex-start", cursor: "pointer", margin: "16px 0" }}>
-            <input
-              type="checkbox"
-              checked={declarationAccepted}
-              onChange={e => setDeclarationAccepted(e.target.checked)}
-            />
-            <span style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
-              I solemnly declare that this exam paper was administered in a past semester at Ambo University and contains authentic historical examination materials. I understand future exams cannot be submitted.
-            </span>
-          </label>
+          <div style={{ background: "var(--canvas)", border: "1px solid var(--line)", borderRadius: "8px", padding: "16px", margin: "16px 0", display: "flex", flexDirection: "column", gap: "10px" }}>
+            <strong style={{ fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--primary)" }}>
+              Three Mandatory Academic Honor Declarations:
+            </strong>
+            <label style={{ display: "flex", gap: "10px", alignItems: "flex-start", cursor: "pointer", fontSize: "0.85rem" }}>
+              <input type="checkbox" checked={declPastSemester} onChange={e => setDeclPastSemester(e.target.checked)}/>
+              <span>1. I declare that this exam paper was officially administered in a past semester at Ambo University and represents historical academic material.</span>
+            </label>
+            <label style={{ display: "flex", gap: "10px", alignItems: "flex-start", cursor: "pointer", fontSize: "0.85rem" }}>
+              <input type="checkbox" checked={declAuthorized} onChange={e => setDeclAuthorized(e.target.checked)}/>
+              <span>2. I declare that I am legally authorized to submit this scan and it contains no confidential, unadministered, or leaked examination papers.</span>
+            </label>
+            <label style={{ display: "flex", gap: "10px", alignItems: "flex-start", cursor: "pointer", fontSize: "0.85rem" }}>
+              <input type="checkbox" checked={declLegible} onChange={e => setDeclLegible(e.target.checked)}/>
+              <span>3. I declare that the scan is authentic, legible, complete, and unmanipulated.</span>
+            </label>
+          </div>
 
           <Button type="submit">Submit paper to Admin for cash payout</Button>
         </form>
       ) : (
-        <div className="submission-list">
-          {contributions.map(c => (
-            <div key={c.id}>
-              <span className="tiny-file"><Icon name="file"/></span>
-              <span>
-                <strong>{c.courseName} · {c.examType} {c.academicYear}</strong>
-                <small>Submitted {c.submittedAt} · Payout account: {c.payoutAccount} ({c.payoutPaymentMethod})</small>
-              </span>
-              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                {c.approvedPayoutEtb && <strong style={{ color: "var(--success)" }}>{c.approvedPayoutEtb} ETB</strong>}
-                <Badge tone={c.status === "PAID_OUT" ? "success" : c.status === "PENDING" ? "warning" : "neutral"}>
-                  {c.status.replace("_", " ")}
-                </Badge>
-              </div>
+        <div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "20px" }}>
+            <div style={{ background: "var(--canvas)", padding: "16px", borderRadius: "8px", border: "1px solid var(--line)" }}>
+              <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>TOTAL EARNINGS SETTLED</span>
+              <Heading level={2} style={{ color: "var(--success)", margin: "4px 0 0" }}>{totalSettledEarnings} ETB</Heading>
             </div>
-          ))}
+            <div style={{ background: "var(--canvas)", padding: "16px", borderRadius: "8px", border: "1px solid var(--line)" }}>
+              <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>SUBMISSIONS IN REVIEW</span>
+              <Heading level={2} style={{ color: "var(--accent)", margin: "4px 0 0" }}>{pendingEvaluation}</Heading>
+            </div>
+          </div>
+
+          {mySubmissions.length === 0 ? (
+            <p style={{ textAlign: "center", color: "var(--muted)", padding: "32px 0" }}>
+              You haven't submitted any exam papers yet. Use the "Sell a paper to Admin" tab to contribute and earn ETB!
+            </p>
+          ) : (
+            <div className="submission-list">
+              {mySubmissions.map(c => {
+                const statusTone: "neutral" | "success" | "warning" | "accent" | "danger" =
+                  c.status === "PAID" || c.status === "PAID_OUT" || c.status === "PUBLISHED" ? "success"
+                  : c.status === "REJECTED" ? "danger"
+                  : c.status === "OFFER_MADE" || c.status === "CHANGES_REQUESTED" ? "warning"
+                  : "accent";
+
+                return (
+                  <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "14px", border: "1px solid var(--line)", borderRadius: "8px", marginBottom: "10px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <strong>{c.courseName} ({c.courseCode})</strong>
+                        <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>
+                          {c.examType} · {c.academicYear} E.C. · Submitted {c.submittedAt}
+                        </div>
+                      </div>
+                      <Badge tone={statusTone}>{c.status.replace("_", " ")}</Badge>
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem", color: "var(--ink-2)" }}>
+                      <span>Payout Target: <b>{c.payoutPaymentMethod} · {c.payoutAccount}</b></span>
+                      <span>
+                        Offered: <b>{c.proposedPayoutEtb} ETB</b>
+                        {c.approvedPayoutEtb && <> · Approved: <b style={{ color: "var(--success)" }}>{c.approvedPayoutEtb} ETB</b></>}
+                      </span>
+                    </div>
+
+                    {c.rejectionReason && (
+                      <div className="alert danger" style={{ margin: "4px 0 0", padding: "8px 12px", fontSize: "0.85rem" }}>
+                        <strong>Feedback:</strong> {c.rejectionReason}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </Card>
   </>;
 }
 
-function Profile({ currentUser }: { currentUser: UserSession }) {
+function Profile({ currentUser, onLogout }: { currentUser: UserSession; onLogout: () => void }) {
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [pwdMsg, setPwdMsg] = useState<{ text: string; tone: "success" | "danger" } | null>(null);
+  const [pwdLoading, setPwdLoading] = useState(false);
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 8) {
+      setPwdMsg({ text: "New password must be at least 8 characters long.", tone: "danger" });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwdMsg({ text: "Passwords do not match.", tone: "danger" });
+      return;
+    }
+
+    setPwdLoading(true);
+    setPwdMsg(null);
+    try {
+      await api.changePassword({ newPassword });
+      setPwdMsg({ text: "Password successfully updated!", tone: "success" });
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err: any) {
+      setPwdMsg({ text: err.message || "Failed to update password.", tone: "danger" });
+    } finally {
+      setPwdLoading(false);
+    }
+  };
+
   return <>
     <PageHead eyebrow="ACCOUNT" title="Profile & settings" text="Manage your personal details and active device sessions."/>
     <div className="settings-grid">
       <Card className="profile-card">
         <div className="profile-avatar">{currentUser.fullName.slice(0, 2).toUpperCase()}</div>
         <Heading level={2}>{currentUser.fullName}</Heading>
-        <p>{currentUser.email}</p>
+        <p>{currentUser.email || currentUser.phone}</p>
         <Badge tone="success">VERIFIED {currentUser.role.replace("_", " ")}</Badge>
         <hr/>
-        <span>ID: {currentUser.studentId}</span>
+        <span>ID: {currentUser.studentId || "AMU-STUDENT"}</span>
         <span>Woliso Campus · Ambo University</span>
+
+        <div style={{ marginTop: "24px", width: "100%" }}>
+          <Button variant="danger" className="full" icon="logout" onClick={onLogout}>
+            Log Out of Session
+          </Button>
+        </div>
       </Card>
       <div>
         <Card className="form-card">
           <Heading level={2}>Personal information</Heading>
           <div className="form-grid">
-            <Input label="Full name" placeholder={currentUser.fullName}/>
-            <Input label="Phone number" placeholder={currentUser.phone || "+251 9..."}/>
+            <Input label="Full name" placeholder={currentUser.fullName} disabled/>
+            <Input label="Phone number" placeholder={currentUser.phone || "Not set"} disabled/>
           </div>
-          <Input label="Email address" placeholder={currentUser.email || "email@example.com"}/>
-          <Button onClick={() => alert("Profile updated.")}>Save changes</Button>
+          <Input label="Email address" placeholder={currentUser.email || "Not set"} disabled/>
+          <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0 0" }}>
+            To update university records or student ID, please visit the Woliso Campus Registrar.
+          </p>
         </Card>
-        <Card className="form-card">
-          <Heading level={2}>Security & devices</Heading>
+
+        <Card className="form-card" style={{ marginTop: "16px" }}>
+          <Heading level={2}>Change Password</Heading>
+          {pwdMsg && (
+            <div className={`alert ${pwdMsg.tone}`} style={{ margin: "12px 0" }}>
+              <span>{pwdMsg.text}</span>
+            </div>
+          )}
+          <form onSubmit={handleChangePassword} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <Input
+              label="New password"
+              placeholder="At least 8 characters"
+              type="password"
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+            />
+            <Input
+              label="Confirm new password"
+              placeholder="Re-enter new password"
+              type="password"
+              value={confirmPassword}
+              onChange={e => setConfirmPassword(e.target.value)}
+            />
+            <Button type="submit" disabled={pwdLoading}>
+              {pwdLoading ? "Saving..." : "Update Password"}
+            </Button>
+          </form>
+        </Card>
+
+        <Card className="form-card" style={{ marginTop: "16px" }}>
+          <Heading level={2}>Security & device sessions</Heading>
           <div className="device-row">
             <Icon name="user"/>
             <span>
-              <strong>Chrome on Android</strong>
-              <small>Woliso, Ethiopia · Active session</small>
+              <strong>Web Browser Session</strong>
+              <small>Woliso, Ethiopia · Active authenticated session</small>
             </span>
             <Badge tone="success">THIS DEVICE</Badge>
           </div>
+          <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0 0" }}>
+            Your account is enforced with a maximum of 2 simultaneous concurrent sessions to protect exam materials.
+          </p>
         </Card>
       </div>
     </div>
@@ -2465,12 +2732,13 @@ function TokensPage() {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("landing");
-  const [testUsers, setTestUsers] = useState<UserSession[]>(INITIAL_USERS);
-  const [currentUser, setCurrentUser] = useState<UserSession>(INITIAL_USERS[0]);
-  const [selectedStream, setSelectedStream] = useState<StreamCode>(currentUser.stream || "NAT_SCI");
+  const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [selectedStream, setSelectedStream] = useState<StreamCode>("NAT_SCI");
   const [courses, setCourses] = useState<FreshmanCourseItem[]>(FRESHMAN_11_COURSES);
   const [selectedCourse, setSelectedCourse] = useState<FreshmanCourseItem>(FRESHMAN_11_COURSES[0]);
-  const [unlockedSemesters, setUnlockedSemesters] = useState<Set<string>>(new Set(["pt-nat-sci-y1s1"]));
+  const [unlockedSemesters, setUnlockedSemesters] = useState<Set<string>>(new Set());
   const [payments, setPayments] = useState<StorePayment[]>(INITIAL_PAYMENTS);
   const [contributions, setContributions] = useState<StoreContribution[]>(INITIAL_CONTRIBUTIONS);
   const [requests, setRequests] = useState<StorePaperRequest[]>(INITIAL_REQUESTS);
@@ -2480,7 +2748,7 @@ export default function App() {
   const [wantedPapers, setWantedPapers] = useState<StoreWantedPaper[]>(INITIAL_WANTED_PAPERS);
   const [structureTab, setStructureTab] = useState<"tree" | "matrix">("tree");
   const [prefilledWanted, setPrefilledWanted] = useState<{ courseId: string; courseCode: string; examType: ExamType } | null>(null);
-  const [selectedPaper, setSelectedPaper] = useState<StoreExamPaper | null>(INITIAL_PAPERS[0]);
+  const [selectedPaper, setSelectedPaper] = useState<StoreExamPaper | null>(INITIAL_PAPERS[0] || null);
   const [termInterests, setTermInterests] = useState<TermInterestRecord[]>(INITIAL_TERM_INTERESTS);
   const [settings, setSettings] = useState<SystemSettingsState>(INITIAL_SYSTEM_SETTINGS);
 
@@ -2488,8 +2756,7 @@ export default function App() {
   const [reviewingPayment, setReviewingPayment] = useState<StorePayment | null>(null);
   const [reviewingContribution, setReviewingContribution] = useState<StoreContribution | null>(null);
   const [payoutInput, setPayoutInput] = useState("100");
-  const [payoutTxInput, setPayoutTxInput] = useState("TB_PAYOUT_9182");
-  const [showRoleSwitcher, setShowRoleSwitcher] = useState(false);
+  const [payoutTxInput, setPayoutTxInput] = useState("");
 
   // Notify Me Modal for Semester 2 (Coming Soon)
   const [notifyModalOpen, setNotifyModalOpen] = useState(false);
@@ -2682,37 +2949,52 @@ export default function App() {
         });
         setUnlockedSemesters(unlocked);
       }
-
-      if (data.users && data.users.length > 0) {
-        const mappedUsers: UserSession[] = data.users.map((u: any) => ({
-          userId: u.id,
-          fullName: u.fullName,
-          email: u.email || "",
-          phone: u.phone || "",
-          role: u.role as Role,
-          programId: u.programId || null,
-          studentId: u.studentId || undefined,
-          stream: u.programId ? (data.programs?.find((p: any) => p.id === u.programId)?.code as StreamCode) : undefined,
-          currentYear: u.currentYear || 1,
-          semesterNumber: 1,
-        }));
-        setTestUsers(mappedUsers);
-        setCurrentUser(prev => {
-          const matched = mappedUsers.find(u => u.role === prev.role && (!prev.stream || u.stream === prev.stream));
-          return matched || mappedUsers[0];
-        });
-      }
     } catch (err) {
       console.error("[Database Bootstrap Error]:", err);
     }
   };
 
   useEffect(() => {
+    const initSession = async () => {
+      try {
+        const meRes = await api.getMe();
+        if (meRes.user) {
+          const stream = (meRes.user.program?.code as StreamCode) || "NAT_SCI";
+          const sess: UserSession = {
+            userId: meRes.user.id,
+            fullName: meRes.user.fullName,
+            email: meRes.user.email || "",
+            phone: meRes.user.phone || "",
+            role: meRes.user.role as Role,
+            programId: meRes.user.programId || null,
+            studentId: meRes.user.studentId || undefined,
+            stream,
+            currentYear: meRes.user.currentYear || 1,
+            mustChangePassword: Boolean(meRes.mustChangePassword),
+          };
+          setCurrentUser(sess);
+          setSelectedStream(stream);
+          setMustChangePassword(Boolean(meRes.mustChangePassword));
+          if (meRes.unlockedProgramTermIds) {
+            setUnlockedSemesters(new Set(meRes.unlockedProgramTermIds));
+          }
+        }
+      } catch (err) {
+        setCurrentUser(null);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    initSession();
     refreshDatabaseData();
   }, []);
 
   // Handlers for payments (backed by PostgreSQL)
   const handlePaymentSubmission = async (p: { method: PaymentMethod; txId: string; screenshotUrl: string }): Promise<StorePayment> => {
+    if (!currentUser) {
+      throw new Error("You must be logged in to submit a payment.");
+    }
     const streamName = selectedStream === "NAT_SCI" ? "Natural Science" : "Social Science";
 
     try {
@@ -2729,7 +3011,7 @@ export default function App() {
         referenceCode: created.referenceCode,
         userId: created.userId,
         studentName: currentUser.fullName,
-        studentId: currentUser.studentId || "AMU-2026-0042",
+        studentId: currentUser.studentId || "AMU-STUDENT",
         stream: selectedStream,
         streamName,
         academicYearNumber: 1,
@@ -2755,6 +3037,7 @@ export default function App() {
   };
 
   const handleApprovePayment = async (payId: string) => {
+    if (!currentUser) return;
     const target = payments.find(p => p.id === payId);
     const confirmed = window.confirm(
       `Confirm approval: Grant full semester access to ${target?.studentName || "student"} for ${target?.streamName || "this semester"} (Ref: ${target?.referenceCode || payId})?`
@@ -2777,6 +3060,7 @@ export default function App() {
   };
 
   const handleRejectPayment = async (payId: string) => {
+    if (!currentUser) return;
     const reason = prompt(
       "Enter mandatory rejection reason (required - will be displayed to student):",
       "Transaction reference ID not found in bank statement"
@@ -2799,6 +3083,7 @@ export default function App() {
   };
 
   const handleRevokePayment = async (payId: string) => {
+    if (!currentUser) return;
     const target = payments.find(p => p.id === payId);
     const reason = prompt(
       `Enter mandatory reason for revoking access for ${target?.studentName || "student"} (e.g. Chargeback, Invalid receipt, Fraudulent statement):`,
@@ -2845,6 +3130,7 @@ export default function App() {
     proposedPayout: number;
     notes: string;
   }) => {
+    if (!currentUser) return;
     try {
       await api.submitContribution({
         studentId: currentUser.userId,
@@ -2866,6 +3152,7 @@ export default function App() {
   };
 
   const handleApproveContribution = async (contribId: string) => {
+    if (!currentUser) return;
     const amount = parseFloat(payoutInput) || 100;
     const tx = payoutTxInput || "TB_PAYOUT_SETTLED";
 
@@ -2884,18 +3171,15 @@ export default function App() {
     }
   };
 
-  // Switch role helper
-  const handleSwitchUser = (user: UserSession) => {
-    setCurrentUser(user);
-    if (user.stream) {
-      setSelectedStream(user.stream);
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch (err) {
+      console.error("Logout error", err);
     }
-    setShowRoleSwitcher(false);
-    if (user.role === "STUDENT") {
-      go("dashboard");
-    } else {
-      go("admin");
-    }
+    setCurrentUser(null);
+    setUnlockedSemesters(new Set());
+    setScreen("landing");
   };
 
   // Handle semester 2 notification signup (backed by PostgreSQL)
@@ -2904,10 +3188,10 @@ export default function App() {
     if (!notifyContact.trim()) return;
 
     try {
-      await api.registerTermInterest(currentUser.userId, "term-y1s2");
+      await api.registerTermInterest(currentUser?.userId || "anon", "term-y1s2");
       const newRecord: TermInterestRecord = {
         id: `interest-${Date.now()}`,
-        userId: currentUser.userId,
+        userId: currentUser?.userId || "anon",
         termId: "term-y1s2",
         termName: `${selectedStream === "NAT_SCI" ? "Natural Science" : "Social Science"} · Year 1, Semester 2`,
         emailOrPhone: notifyContact.trim(),
@@ -2922,6 +3206,7 @@ export default function App() {
   };
 
   const handleSaveSettings = async (s: SystemSettingsState) => {
+    if (!currentUser) return;
     try {
       await api.saveSettings({
         SEMESTER_PRICE_ETB: s.semesterPriceEtb,
@@ -2944,15 +3229,58 @@ export default function App() {
     }
   };
 
-  // Standalone screen returns
-  if (screen === "landing") return <Landing go={go}/>;
-  if (screen === "login" || screen === "signup" || screen === "verify" || screen === "admin-login") {
-    return <Auth mode={screen === "admin-login" ? "admin" : screen} go={go} onLogin={(role) => {
-      const u = role === "ADMIN" ? INITIAL_USERS.find(x => x.role === "ADMIN")! : INITIAL_USERS[0];
-      setCurrentUser(u);
-      if (u.stream) setSelectedStream(u.stream);
-    }}/>;
+  // Loading state while checking active session
+  if (authLoading) {
+    return (
+      <div className="standalone-state" style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+        <div style={{ textAlign: "center" }}>
+          <Logo/>
+          <p style={{ marginTop: "16px", color: "var(--muted)" }}>Connecting to ExamVault Woliso archive...</p>
+        </div>
+      </div>
+    );
   }
+
+  // Standalone public pages
+  if (screen === "landing") return <Landing go={go}/>;
+  if (screen === "terms") return <TermsPage go={go}/>;
+  if (screen === "privacy") return <PrivacyPage go={go}/>;
+  if (screen === "contact") return <ContactPage go={go}/>;
+  if (screen === "forbidden") return <ForbiddenPage go={go}/>;
+  if (screen === "not-found") return <NotFoundPage go={go}/>;
+  if (screen === "help" && !currentUser) return <Help/>;
+
+  if (screen === "login" || screen === "signup" || screen === "admin-login" || screen === "verify") {
+    return (
+      <Auth
+        mode={screen === "admin-login" ? "admin" : (screen as any)}
+        go={go}
+        onAuthSuccess={(u, mustChange) => {
+          setCurrentUser(u);
+          setSelectedStream(u.stream || "NAT_SCI");
+          setMustChangePassword(Boolean(mustChange));
+          refreshDatabaseData();
+        }}
+      />
+    );
+  }
+
+  // Protected screen guard: require login
+  if (!currentUser) {
+    return (
+      <Auth
+        mode="login"
+        go={go}
+        onAuthSuccess={(u, mustChange) => {
+          setCurrentUser(u);
+          setSelectedStream(u.stream || "NAT_SCI");
+          setMustChangePassword(Boolean(mustChange));
+          refreshDatabaseData();
+        }}
+      />
+    );
+  }
+
   if (screen === "viewer") return <Viewer go={go} currentUser={currentUser} paper={selectedPaper}/>;
   if (screen === "checkout") {
     return (
@@ -2968,9 +3296,14 @@ export default function App() {
   }
 
   // Role separation guards
+  const adminScreens = ["admin","structure","papers","contributions","paper-requests","admin-payments","users","audit","settings","components","tokens"];
+  if (currentUser.role === "STUDENT" && adminScreens.includes(screen)) {
+    return <ForbiddenPage go={go}/>;
+  }
+
   if (currentUser.role === "CONTENT_MANAGER" && (screen === "admin-payments" || screen === "users")) {
     return (
-      <Shell screen={screen} go={go} currentUser={currentUser} onOpenRoleSwitcher={() => setShowRoleSwitcher(true)}>
+      <Shell screen={screen} go={go} currentUser={currentUser}>
         <AccessDenied
           title="Access Restricted for Content Managers"
           message="Content Managers do not have permissions to view student payments or administrative user roles."
@@ -2980,12 +3313,12 @@ export default function App() {
     );
   }
 
-  if (currentUser.role === "PAYMENT_VERIFIER" && screen === "structure") {
+  if (currentUser.role === "PAYMENT_VERIFIER" && (screen === "structure" || screen === "papers")) {
     return (
-      <Shell screen={screen} go={go} currentUser={currentUser} onOpenRoleSwitcher={() => setShowRoleSwitcher(true)}>
+      <Shell screen={screen} go={go} currentUser={currentUser}>
         <AccessDenied
           title="Access Restricted for Payment Verifiers"
-          message="Payment Verifiers do not have permission to view or modify freshman curriculum structure."
+          message="Payment Verifiers do not have permission to view or modify freshman curriculum structure or exam papers."
           onGoBack={() => go("admin")}
         />
       </Shell>
@@ -3042,7 +3375,7 @@ export default function App() {
         onSubmitRequest={() => {}}
       />
     ) :
-    screen === "profile" ? <Profile currentUser={currentUser}/> :
+    screen === "profile" ? <Profile currentUser={currentUser} onLogout={handleLogout}/> :
     screen === "notifications" ? <Notifications notifications={notifications}/> :
     screen === "help" ? <Help/> :
     screen === "admin" ? (
@@ -3126,48 +3459,20 @@ export default function App() {
         screen={screen}
         go={go}
         currentUser={currentUser}
-        onOpenRoleSwitcher={() => setShowRoleSwitcher(true)}
         pendingPaymentsCount={pendingPaymentsCount}
         unreadNotifsCount={notifications.filter(n => !n.read).length}
       >
         {content}
       </Shell>
 
-      {/* Role Switcher Modal (Development Mode Only) */}
-      {isDev && showRoleSwitcher && (
-        <div className="modal-backdrop" onClick={() => setShowRoleSwitcher(false)}>
-          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: "480px" }}>
-            <div className="modal-head">
-              <Heading level={2}>Switch Active Test Role</Heading>
-              <Button variant="ghost" onClick={() => setShowRoleSwitcher(false)}><Icon name="close"/></Button>
-            </div>
-            <div className="modal-body">
-              <p>Test the full application from different user perspectives across Ambo University:</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {testUsers.map(u => (
-                  <button
-                    key={u.userId}
-                    className={`nav-item ${currentUser.userId === u.userId ? "active" : ""}`}
-                    style={{ padding: "12px 16px", height: "auto", border: "1px solid var(--line)" }}
-                    onClick={() => handleSwitchUser(u)}
-                  >
-                    <Icon name={u.role === "STUDENT" ? "user" : "shield"}/>
-                    <div style={{ display: "flex", flexDirection: "column", textAlign: "left", flex: 1 }}>
-                      <strong>{u.fullName}</strong>
-                      <small style={{ color: "var(--muted)" }}>
-                        {u.role.replace("_", " ")} · {u.stream ? (u.stream === "NAT_SCI" ? "Natural Science" : "Social Science") : "Campus Staff"}
-                      </small>
-                    </div>
-                    {currentUser.userId === u.userId && <Badge tone="success">ACTIVE</Badge>}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="modal-footer">
-              <Button variant="secondary" onClick={() => setShowRoleSwitcher(false)}>Close</Button>
-            </div>
-          </div>
-        </div>
+      {/* Force Password Change Modal (First login for admin or temporary passwords) */}
+      {mustChangePassword && (
+        <ForcePasswordChangeModal
+          onPasswordChanged={() => {
+            setMustChangePassword(false);
+            setCurrentUser(prev => prev ? { ...prev, mustChangePassword: false } : null);
+          }}
+        />
       )}
 
       {/* Working "Notify Me" Modal for Year 1 Semester 2 (Coming Soon) */}
