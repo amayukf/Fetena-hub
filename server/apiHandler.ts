@@ -1,5 +1,6 @@
-import { PrismaClient, PaymentMethod, PaymentStatus, ContributionStatus, ExamType, AuditRiskLevel, PaperStatus, Role, ScanQuality } from '@prisma/client';
+import { Prisma, PrismaClient, PaymentMethod, PaymentStatus, ContributionStatus, ExamType, AuditRiskLevel, PaperStatus, Role, ScanQuality } from '@prisma/client';
 import crypto from 'node:crypto';
+import bcrypt from 'bcryptjs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { paymentSubmissionSchema, paperContributionSchema } from '../src/lib/validation';
 import { verifyPaperAccess } from '../src/lib/access';
@@ -17,11 +18,61 @@ import {
   convertAndStoreCompressedPages,
 } from '../src/lib/pageCompressor';
 import { dispatchNotification } from '../src/lib/notifications';
+import type { StreamCode } from '../src/types';
 
 export const prisma = new PrismaClient();
 
 function sha256(data: string | Buffer): string {
   return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+export function parseCookies(req: IncomingMessage): Record<string, string> {
+  const list: Record<string, string> = {};
+  const rc = req.headers.cookie;
+  if (rc) {
+    rc.split(';').forEach((cookie) => {
+      const parts = cookie.split('=');
+      const key = parts.shift()?.trim();
+      const value = decodeURIComponent(parts.join('=').trim());
+      if (key) list[key] = value;
+    });
+  }
+  return list;
+}
+
+export async function checkRateLimit(
+  key: string,
+  limit: number,
+  windowSeconds: number
+): Promise<{ allowed: boolean; remaining: number; resetAt: Date }> {
+  const now = new Date();
+  const expireAt = new Date(now.getTime() + windowSeconds * 1000);
+
+  try {
+    const record = await prisma.rateLimit.findUnique({ where: { key } });
+
+    if (!record || record.expireAt < now) {
+      await prisma.rateLimit.upsert({
+        where: { key },
+        update: { points: 1, expireAt },
+        create: { key, points: 1, expireAt },
+      });
+      return { allowed: true, remaining: limit - 1, resetAt: expireAt };
+    }
+
+    if (record.points >= limit) {
+      return { allowed: false, remaining: 0, resetAt: record.expireAt };
+    }
+
+    const updated = await prisma.rateLimit.update({
+      where: { key },
+      data: { points: { increment: 1 } },
+    });
+
+    return { allowed: true, remaining: Math.max(0, limit - updated.points), resetAt: record.expireAt };
+  } catch {
+    return { allowed: true, remaining: 1, resetAt: expireAt };
+  }
 }
 
 async function parseBody(req: IncomingMessage): Promise<any> {
@@ -46,16 +97,22 @@ async function parseBody(req: IncomingMessage): Promise<any> {
   });
 }
 
-function sendJson(res: ServerResponse, status: number, data: any) {
+function sendJson(res: ServerResponse, status: number, data: any, headers?: Record<string, string | string[]>) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
-    'Cache-Control': 'no-store',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self';",
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+    ...(headers || {}),
   });
   res.end(JSON.stringify(data));
 }
 
-function sendError(res: ServerResponse, status: number, message: string, details?: any) {
-  sendJson(res, status, { error: message, details });
+function sendError(res: ServerResponse, status: number, message: string, details?: any, headers?: Record<string, string | string[]>) {
+  sendJson(res, status, { error: message, details }, headers);
 }
 
 export async function resolveActor(
@@ -63,32 +120,56 @@ export async function resolveActor(
   body?: any,
   query?: URLSearchParams
 ): Promise<{ id: string; role: Role; user: any } | null> {
-  const actorId =
-    (req.headers['x-actor-id'] as string) ||
-    body?.actorId ||
-    body?.reviewerId ||
-    query?.get('actorId') ||
-    query?.get('userId');
-  const explicitRole =
-    (req.headers['x-actor-role'] as string) ||
-    body?.actorRole ||
-    query?.get('actorRole');
+  // 1. Session token from Cookie or Bearer header
+  const cookies = parseCookies(req);
+  const authHeader = req.headers['authorization'];
+  const rawToken =
+    (authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null) ||
+    cookies['examvault_session'] ||
+    (req.headers['x-session-token'] as string);
 
-  if (actorId) {
-    const user = await prisma.user.findUnique({ where: { id: actorId } });
-    if (user) {
-      return { id: user.id, role: user.role, user };
+  if (rawToken) {
+    const tokenHash = sha256(rawToken);
+    const session = await prisma.session.findUnique({
+      where: { sessionTokenHash: tokenHash },
+      include: { user: true },
+    });
+
+    if (session && session.expiresAt > new Date() && session.user && session.user.deletedAt === null) {
+      return { id: session.user.id, role: session.user.role, user: session.user };
     }
   }
 
-  if (explicitRole && Object.values(Role).includes(explicitRole as Role)) {
-    const roleUser = await prisma.user.findFirst({
-      where: { role: explicitRole as Role, deletedAt: null },
-    });
-    if (roleUser) {
-      return { id: roleUser.id, role: roleUser.role, user: roleUser };
+  // 2. Explicit actor ID from header or body (Only allowed in non-production environments for automated testing)
+  if (process.env.NODE_ENV !== 'production') {
+    const actorId =
+      (req.headers['x-actor-id'] as string) ||
+      body?.actorId ||
+      body?.reviewerId ||
+      query?.get('actorId');
+
+    if (actorId) {
+      const user = await prisma.user.findUnique({ where: { id: actorId } });
+      if (user && user.deletedAt === null) {
+        return { id: user.id, role: user.role, user };
+      }
     }
-    return { id: `actor-${explicitRole}`, role: explicitRole as Role, user: null };
+
+    // 3. Explicit role fallback (Development & internal test harness only)
+    const explicitRole =
+      (req.headers['x-actor-role'] as string) ||
+      body?.actorRole ||
+      query?.get('actorRole');
+
+    if (explicitRole && Object.values(Role).includes(explicitRole as Role)) {
+      const roleUser = await prisma.user.findFirst({
+        where: { role: explicitRole as Role, deletedAt: null },
+      });
+      if (roleUser) {
+        return { id: roleUser.id, role: roleUser.role, user: roleUser };
+      }
+      return { id: `actor-${explicitRole}`, role: explicitRole as Role, user: null };
+    }
   }
 
   return null;
@@ -100,6 +181,374 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
   const method = req.method?.toUpperCase();
 
   try {
+    // -------------------------------------------------------------
+    // GET /health and GET /api/health - System Health Check
+    // -------------------------------------------------------------
+    if ((pathname === '/health' || pathname === '/api/health') && method === 'GET') {
+      try {
+        await prisma.$queryRaw`SELECT 1`;
+        return sendJson(res, 200, {
+          status: 'ok',
+          database: 'connected',
+          storage: 'ready',
+          timestamp: new Date().toISOString(),
+          uptime: process.uptime(),
+        });
+      } catch (err: any) {
+        return sendJson(res, 503, {
+          status: 'error',
+          database: 'disconnected',
+          error: err.message,
+        });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/auth/signup - Real Student Registration
+    // -------------------------------------------------------------
+    if (pathname === '/api/auth/signup' && method === 'POST') {
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1';
+      const rl = await checkRateLimit(`signup:${ip}`, 10, 3600);
+      if (!rl.allowed) {
+        return sendError(res, 429, 'Too many signup attempts. Please try again later.');
+      }
+
+      const body = await parseBody(req);
+      const fullName = body.fullName?.trim();
+      const email = body.email?.trim().toLowerCase() || null;
+      const phone = body.phone?.trim() || null;
+      const studentId = body.studentId?.trim() || null;
+      const streamCode = (body.stream as StreamCode) || 'NAT_SCI';
+      const password = body.password;
+
+      if (!fullName || fullName.length < 2) {
+        return sendError(res, 400, 'Full name must be at least 2 characters.');
+      }
+      if (!email && !phone) {
+        return sendError(res, 400, 'Either email or phone number is required for signup.');
+      }
+      if (!password || password.length < 8) {
+        return sendError(res, 400, 'Password must be at least 8 characters long.');
+      }
+
+      // Check duplicate accounts
+      if (email) {
+        const existingEmail = await prisma.user.findUnique({ where: { email } });
+        if (existingEmail) {
+          return sendError(res, 409, 'An account with this email address already exists.');
+        }
+      }
+      if (phone) {
+        const existingPhone = await prisma.user.findUnique({ where: { phone } });
+        if (existingPhone) {
+          return sendError(res, 409, 'An account with this phone number already exists.');
+        }
+      }
+      if (studentId) {
+        const existingStudentId = await prisma.user.findUnique({ where: { studentId } });
+        if (existingStudentId) {
+          return sendError(res, 409, 'An account with this Student ID already exists.');
+        }
+      }
+
+      // Link stream program
+      const program = await prisma.program.findFirst({
+        where: { code: streamCode, campus: { code: 'WOLISO' } },
+      });
+
+      const passwordHash = await bcrypt.hash(password, 10);
+      const user = await prisma.user.create({
+        data: {
+          fullName,
+          email,
+          phone,
+          studentId,
+          programId: program?.id || null,
+          currentYear: 1,
+          role: Role.STUDENT, // Strictly enforce STUDENT; ignore any injected role
+          passwordHash,
+          canSell: true,
+          isActive: true,
+        },
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          phone: true,
+          studentId: true,
+          role: true,
+          programId: true,
+          currentYear: true,
+          mustChangePassword: true,
+          canSell: true,
+          createdAt: true,
+        },
+      });
+
+      // Create session
+      const rawToken = crypto.randomUUID();
+      const sessionTokenHash = sha256(rawToken);
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      await prisma.session.create({
+        data: {
+          userId: user.id,
+          sessionTokenHash,
+          ipAddress: ip,
+          userAgent: (req.headers['user-agent'] as string) || 'Browser',
+          expiresAt,
+        },
+      });
+
+      // Audit log
+      await prisma.auditLog.create({
+        data: {
+          action: 'Student registered account',
+          entityType: 'User',
+          entityId: user.id,
+          actorId: user.id,
+          riskLevel: AuditRiskLevel.LOW,
+          details: {
+            fullName: user.fullName,
+            stream: streamCode,
+            studentId: user.studentId,
+          },
+        },
+      });
+
+      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000`;
+      return sendJson(res, 201, {
+        token: rawToken,
+        user: {
+          userId: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          phone: user.phone,
+          studentId: user.studentId,
+          role: user.role,
+          stream: streamCode,
+          programId: user.programId,
+          currentYear: user.currentYear,
+          mustChangePassword: user.mustChangePassword,
+          canSell: user.canSell,
+        },
+        unlockedProgramTermIds: [],
+      }, { 'Set-Cookie': cookieHeader });
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/auth/login - Real User & Admin Authentication
+    // -------------------------------------------------------------
+    if (pathname === '/api/auth/login' && method === 'POST') {
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1';
+      const rl = await checkRateLimit(`login:${ip}`, 5, 900);
+      if (!rl.allowed) {
+        return sendError(res, 429, 'Too many login attempts. Please try again in 15 minutes.');
+      }
+
+      const body = await parseBody(req);
+      const identifier = body.identifier?.trim();
+      const password = body.password;
+
+      if (!identifier || !password) {
+        return sendError(res, 400, 'Identifier (email, student ID, or phone) and password are required.');
+      }
+
+      const user = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { email: identifier.toLowerCase() },
+            { studentId: identifier },
+            { phone: identifier },
+          ],
+          deletedAt: null,
+        },
+        include: {
+          program: true,
+          entitlements: {
+            where: { isActive: true },
+            select: { programTermId: true },
+          },
+        },
+      });
+
+      if (!user) {
+        return sendError(res, 401, 'Invalid credentials.');
+      }
+
+      const passwordMatches = await bcrypt.compare(password, user.passwordHash);
+      if (!passwordMatches) {
+        return sendError(res, 401, 'Invalid credentials.');
+      }
+
+      if (!user.isActive) {
+        return sendError(res, 403, 'Account has been deactivated. Please contact campus administration.');
+      }
+
+      // Max 2 concurrent sessions
+      const activeSessions = await prisma.session.findMany({
+        where: { userId: user.id, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      if (activeSessions.length >= 2) {
+        await prisma.session.delete({ where: { id: activeSessions[0].id } });
+      }
+
+      const rawToken = crypto.randomUUID();
+      const sessionTokenHash = sha256(rawToken);
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      await prisma.session.create({
+        data: {
+          userId: user.id,
+          sessionTokenHash,
+          ipAddress: ip,
+          userAgent: (req.headers['user-agent'] as string) || 'Browser',
+          expiresAt,
+        },
+      });
+
+      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000`;
+      const streamCode = (user.program?.code as StreamCode) || (user.role === Role.STUDENT ? 'NAT_SCI' : null);
+
+      return sendJson(res, 200, {
+        token: rawToken,
+        user: {
+          userId: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          phone: user.phone,
+          studentId: user.studentId,
+          role: user.role,
+          stream: streamCode,
+          programId: user.programId,
+          currentYear: user.currentYear,
+          mustChangePassword: user.mustChangePassword,
+          canSell: user.canSell,
+        },
+        unlockedProgramTermIds: user.entitlements.map(e => e.programTermId),
+      }, { 'Set-Cookie': cookieHeader });
+    }
+
+    // -------------------------------------------------------------
+    // GET /api/auth/me - Current User Session
+    // -------------------------------------------------------------
+    if (pathname === '/api/auth/me' && method === 'GET') {
+      const actor = await resolveActor(req, undefined, url.searchParams);
+      if (!actor || !actor.user) {
+        return sendJson(res, 200, { authenticated: false, user: null, unlockedProgramTermIds: [] });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: actor.id },
+        include: {
+          program: true,
+          entitlements: {
+            where: { isActive: true },
+            select: { programTermId: true },
+          },
+        },
+      });
+
+      if (!user || !user.isActive || user.deletedAt !== null) {
+        return sendJson(res, 200, { authenticated: false, user: null, unlockedProgramTermIds: [] });
+      }
+
+      const streamCode = (user.program?.code as StreamCode) || (user.role === Role.STUDENT ? 'NAT_SCI' : null);
+
+      return sendJson(res, 200, {
+        authenticated: true,
+        user: {
+          userId: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          phone: user.phone,
+          studentId: user.studentId,
+          role: user.role,
+          stream: streamCode,
+          programId: user.programId,
+          currentYear: user.currentYear,
+          mustChangePassword: user.mustChangePassword,
+          canSell: user.canSell,
+        },
+        unlockedProgramTermIds: user.entitlements.map(e => e.programTermId),
+      });
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/auth/logout - Session Termination
+    // -------------------------------------------------------------
+    if (pathname === '/api/auth/logout' && method === 'POST') {
+      const cookies = parseCookies(req);
+      const authHeader = req.headers['authorization'];
+      const rawToken =
+        (authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null) ||
+        cookies['examvault_session'] ||
+        (req.headers['x-session-token'] as string);
+
+      if (rawToken) {
+        const tokenHash = sha256(rawToken);
+        await prisma.session.deleteMany({ where: { sessionTokenHash: tokenHash } });
+      }
+
+      const clearCookie = `examvault_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+      return sendJson(res, 200, { success: true, message: 'Logged out successfully' }, { 'Set-Cookie': clearCookie });
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/auth/change-password - Change Password & Clear Forced Flag
+    // -------------------------------------------------------------
+    if (pathname === '/api/auth/change-password' && method === 'POST') {
+      const body = await parseBody(req);
+      const actor = await resolveActor(req, body, url.searchParams);
+      const targetUserId = actor?.id || body.userId;
+      const newPassword = body.newPassword;
+
+      if (!targetUserId) {
+        return sendError(res, 401, 'Authentication required to change password.');
+      }
+
+      if (!newPassword || newPassword.length < 8) {
+        return sendError(res, 400, 'New password must be at least 8 characters long.');
+      }
+
+      const user = await prisma.user.findUnique({ where: { id: targetUserId } });
+      if (!user) {
+        return sendError(res, 404, 'User not found.');
+      }
+
+      if (body.oldPassword) {
+        const matches = await bcrypt.compare(body.oldPassword, user.passwordHash);
+        if (!matches) {
+          return sendError(res, 401, 'Current password is incorrect.');
+        }
+      }
+
+      const newHash = await bcrypt.hash(newPassword, 10);
+      await prisma.user.update({
+        where: { id: targetUserId },
+        data: {
+          passwordHash: newHash,
+          mustChangePassword: false, // Flag cleared upon changing password!
+        },
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          action: 'User password changed',
+          entityType: 'User',
+          entityId: targetUserId,
+          actorId: targetUserId,
+          riskLevel: AuditRiskLevel.MEDIUM,
+          details: {
+            userId: targetUserId,
+            forcedChangeCompleted: user.mustChangePassword,
+          },
+        },
+      });
+
+      return sendJson(res, 200, { success: true, message: 'Password updated successfully.' });
+    }
+
     // -------------------------------------------------------------
     // GET /api/bootstrap - Complete verified state from PostgreSQL
     // -------------------------------------------------------------
@@ -278,8 +727,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // -------------------------------------------------------------
     if (pathname === '/api/admin/overview' && method === 'GET') {
       const actor = await resolveActor(req, undefined, url.searchParams);
-      if (actor && actor.role === Role.STUDENT) {
-        return sendError(res, 403, 'Students are not authorized to view admin overview.');
+      if (!actor || actor.role === Role.STUDENT) {
+        return sendError(res, 403, 'Students and unauthenticated users are not authorized to view admin overview.');
       }
 
       const [revenueAgg, activeStudentsCount, pendingPaymentsCount, publishedPapersCount, courses, recentLogs] = await Promise.all([
@@ -579,7 +1028,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // -------------------------------------------------------------
     if (pathname === '/api/payments' && method === 'GET') {
       const actor = await resolveActor(req, undefined, url.searchParams);
-      if (actor && (actor.role === Role.CONTENT_MANAGER || actor.role === Role.STUDENT)) {
+      if (!actor || actor.role === Role.CONTENT_MANAGER || actor.role === Role.STUDENT) {
         return sendError(res, 403, 'Content managers and students are not authorized to view payments.');
       }
 
@@ -605,8 +1054,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const reviewerId = body.reviewerId;
       const actor = await resolveActor(req, body, url.searchParams);
 
-      if (actor && actor.role === Role.CONTENT_MANAGER) {
-        return sendError(res, 403, 'Content managers are not authorized to approve payments.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.PAYMENT_VERIFIER)) {
+        return sendError(res, 403, 'Content managers and unauthorized users are not authorized to approve payments.');
       }
 
       const payment = await prisma.payment.findUnique({
@@ -713,8 +1162,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const reviewerId = body.reviewerId;
       const actor = await resolveActor(req, body, url.searchParams);
 
-      if (actor && actor.role === Role.CONTENT_MANAGER) {
-        return sendError(res, 403, 'Content managers are not authorized to reject payments.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.PAYMENT_VERIFIER)) {
+        return sendError(res, 403, 'Content managers and unauthorized users are not authorized to reject payments.');
       }
 
       if (!reason) {
@@ -797,8 +1246,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const reviewerId = body.reviewerId;
       const actor = await resolveActor(req, body, url.searchParams);
 
-      if (actor && actor.role === Role.CONTENT_MANAGER) {
-        return sendError(res, 403, 'Content managers are not authorized to revoke payments.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.PAYMENT_VERIFIER)) {
+        return sendError(res, 403, 'Content managers and unauthorized users are not authorized to revoke payments.');
       }
 
       if (!reason) {
@@ -913,12 +1362,13 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         studentNotes,
       } = parsed.data;
 
-      const studentId = rawBody.studentId;
+      const actor = await resolveActor(req, rawBody, url.searchParams);
+      const studentId = actor?.id || rawBody.studentId;
       if (!studentId) {
-        return sendError(res, 400, 'Student user ID required');
+        return sendError(res, 401, 'Student authentication required to submit exam papers');
       }
 
-      // Check student permission
+      // Check student permission & canSell status
       const student = await prisma.user.findUnique({
         where: { id: studentId },
       });
@@ -931,25 +1381,87 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 403, 'User paper contribution permissions have been revoked by campus admin.');
       }
 
+      // SERVER VALIDATION 1: Exam date must be strictly in the past (reject today or future dates)
+      const examDateObj = new Date(examDate);
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      if (isNaN(examDateObj.getTime()) || examDateObj >= todayStart) {
+        return sendError(
+          res,
+          400,
+          'Exam date must be in the past. Exams from today or future dates cannot be accepted for archival.'
+        );
+      }
+
+      // SERVER VALIDATION 2: Only the 11 courses approved for Woliso Campus
+      const course = await prisma.course.findUnique({ where: { id: courseId } });
+      if (!course || !course.isActive || course.deletedAt !== null) {
+        return sendError(res, 400, 'Invalid course selected. Only the 11 approved freshman courses are accepted.');
+      }
+
+      // SERVER VALIDATION 3: Three mandatory declarations with text and student timestamp
+      const declaration1 = rawBody.declarationAuthentic === true || declarationAccepted;
+      const declaration2 = rawBody.declarationUnreleased === true || declarationAccepted;
+      const declaration3 = rawBody.declarationRightsTransfer === true || declarationAccepted;
+      if (!declaration1 || !declaration2 || !declaration3) {
+        return sendError(res, 400, 'All three mandatory student declarations must be explicitly accepted.');
+      }
+
+      const verifiedDeclarationText =
+        declarationText ||
+        '1. I affirm under academic honor code that I personally sat for or received this original exam paper at Ambo University Woliso Campus.\n' +
+        '2. I certify that this exam paper has already been administered and does not contain confidential or unreleased upcoming exam material.\n' +
+        '3. I transfer non-exclusive archival publication rights to ExamVault Woliso archive in exchange for the agreed buyout payout.';
+
+      // SERVER VALIDATION 4: Daily limit (5/day) and Weekly limit (15/week)
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const dailyCount = await prisma.paperContribution.count({
+        where: { studentId, createdAt: { gte: oneDayAgo } },
+      });
+      if (dailyCount >= 5) {
+        return sendError(res, 429, 'Daily submission limit reached (maximum 5 contributions per 24 hours).');
+      }
+
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const weeklyCount = await prisma.paperContribution.count({
+        where: { studentId, createdAt: { gte: sevenDaysAgo } },
+      });
+      if (weeklyCount >= 15) {
+        return sendError(res, 429, 'Weekly submission limit reached (maximum 15 contributions per 7 days).');
+      }
+
       // Compute sha256 and enforce duplicate check
       const fileName = rawBody.fileName || `${examType}_${academicYear}_paper.pdf`;
       const fileSha256 = rawBody.sha256 || sha256(`file-${courseId}-${examDate}-${academicYear}-${fileName}`);
 
-      // Check for exact duplicate in library or quarantine
+      // Auto-reject exact duplicates already in published library
       const existingPaper = await prisma.examPaper.findFirst({
-        where: { sha256: fileSha256 },
+        where: { sha256: fileSha256, deletedAt: null },
       });
-
       if (existingPaper) {
         return sendError(res, 409, 'This exact exam paper has already been digitized and published in ExamVault.');
       }
 
       const existingFile = await prisma.contributionFile.findFirst({
         where: { sha256: fileSha256 },
+        include: { contribution: true },
       });
-
-      if (existingFile) {
+      if (existingFile && existingFile.contribution.status !== ContributionStatus.REJECTED) {
         return sendError(res, 409, 'This exact paper file is already undergoing review in the admin verification queue.');
+      }
+
+      const randomQuarantineKey = rawBody.storageKey && rawBody.storageKey.startsWith('quarantine/')
+        ? rawBody.storageKey
+        : generateRandomStorageKey('quarantine', 'pdf');
+
+      // If file binary provided in base64, save to quarantine storage
+      if (rawBody.fileBase64) {
+        const buf = Buffer.from(rawBody.fileBase64, 'base64');
+        const sig = detectFileSignature(buf);
+        if (!sig.valid || !sig.detectedMime) {
+          return sendError(res, 400, sig.error || 'Invalid file format. Authentic PDF, JPG, or PNG required.');
+        }
+        await storage.upload(randomQuarantineKey, buf, sig.detectedMime);
       }
 
       const contribution = await prisma.$transaction(async (tx) => {
@@ -958,10 +1470,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             studentId,
             courseId,
             examType,
-            examDate: new Date(examDate),
+            examDate: examDateObj,
             academicYearEc: academicYear,
             studentNotes: studentNotes || null,
-            declarationText: declarationText || 'I affirm under university honor code that I personally sat for or received this exam paper at Ambo University Woliso Campus.',
+            declarationText: verifiedDeclarationText,
             declarationAcceptedAt: new Date(),
             payoutPaymentMethod,
             payoutAccount,
@@ -970,14 +1482,14 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           },
           include: {
             course: true,
-            student: true,
+            student: { select: { id: true, fullName: true, studentId: true } },
           },
         });
 
         await tx.contributionFile.create({
           data: {
             contributionId: c.id,
-            storageKey: generateRandomStorageKey('quarantine', 'pdf', c.id),
+            storageKey: randomQuarantineKey,
             sha256: fileSha256,
             mimeType: 'application/pdf',
             sizeBytes: rawBody.fileSizeBytes || 2400000,
@@ -987,13 +1499,14 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
 
         await tx.auditLog.create({
           data: {
-            action: 'Paper contribution submitted',
+            action: 'Paper contribution submitted by student',
             entityType: 'PaperContribution',
             entityId: c.id,
             actorId: studentId,
             riskLevel: AuditRiskLevel.LOW,
             details: {
               courseId: c.courseId,
+              courseCode: course.code,
               examType: c.examType,
               examDate: examDate,
               payoutAccount: c.payoutAccount,
@@ -1009,12 +1522,339 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     }
 
     // -------------------------------------------------------------
-    // POST /api/contributions/:id/approve - Admin Buyout Approval
+    // GET /api/contributions/my - Student Contributions & Earnings Dashboard
+    // -------------------------------------------------------------
+    if (pathname === '/api/contributions/my' && method === 'GET') {
+      const actor = await resolveActor(req, undefined, url.searchParams);
+      if (!actor) {
+        return sendError(res, 401, 'Authentication required to view your contributions.');
+      }
+
+      const myContribs = await prisma.paperContribution.findMany({
+        where: { studentId: actor.id },
+        include: {
+          course: true,
+          files: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const totalEarnedEtb = myContribs
+        .filter((c) => c.status === ContributionStatus.PAID)
+        .reduce((sum, c) => sum + Number(c.approvedPayoutEtb || 0), 0);
+
+      const pendingPayoutEtb = myContribs
+        .filter((c) => c.status === ContributionStatus.PUBLISHED || c.status === ContributionStatus.ACCEPTED)
+        .reduce((sum, c) => sum + Number(c.approvedPayoutEtb || c.proposedPayoutEtb || 0), 0);
+
+      return sendJson(res, 200, {
+        contributions: myContribs,
+        totalEarnedEtb,
+        pendingPayoutEtb,
+        count: myContribs.length,
+      });
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/contributions/:id/review - Admin Review (Approve, Counter-offer, Request scan, Reject)
+    // -------------------------------------------------------------
+    if (pathname.startsWith('/api/contributions/') && pathname.endsWith('/review') && method === 'POST') {
+      const parts = pathname.split('/');
+      const contribId = parts[3];
+      const body = await parseBody(req);
+      const actor = await resolveActor(req, body, url.searchParams);
+
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to review content submissions.');
+      }
+
+      const { action, approvedPayoutEtb, counterOfferEtb, reason } = body;
+      const contrib = await prisma.paperContribution.findUnique({
+        where: { id: contribId },
+        include: { course: true, student: true, files: true },
+      });
+
+      if (!contrib) {
+        return sendError(res, 404, 'Contribution not found');
+      }
+
+      let newStatus: ContributionStatus = contrib.status;
+      let finalApprovedAmount = contrib.approvedPayoutEtb;
+
+      if (action === 'APPROVE') {
+        newStatus = ContributionStatus.ACCEPTED;
+        finalApprovedAmount = new Prisma.Decimal(Number(approvedPayoutEtb || contrib.proposedPayoutEtb || 100));
+      } else if (action === 'COUNTER_OFFER') {
+        newStatus = ContributionStatus.OFFER_MADE;
+        finalApprovedAmount = new Prisma.Decimal(Number(counterOfferEtb || 80));
+      } else if (action === 'REQUEST_BETTER_SCAN') {
+        newStatus = ContributionStatus.CHANGES_REQUESTED;
+      } else if (action === 'REJECT') {
+        newStatus = ContributionStatus.REJECTED;
+        if (!reason) return sendError(res, 400, 'Rejection reason is required.');
+      } else if (action === 'START_REVIEW') {
+        newStatus = ContributionStatus.IN_REVIEW;
+      } else {
+        return sendError(res, 400, 'Invalid review action. Allowed: APPROVE, COUNTER_OFFER, REQUEST_BETTER_SCAN, REJECT, START_REVIEW');
+      }
+
+      const updated = await prisma.paperContribution.update({
+        where: { id: contribId },
+        data: {
+          status: newStatus,
+          approvedPayoutEtb: finalApprovedAmount,
+          rejectionReason: reason || null,
+          reviewedById: actor?.id || null,
+          reviewedAt: new Date(),
+        },
+        include: { course: true },
+      });
+
+      // Notification
+      let notifTitle = 'Contribution Update';
+      let notifMsg = `Your contribution for ${contrib.course.code} has been updated.`;
+      if (newStatus === ContributionStatus.ACCEPTED) {
+        notifTitle = 'Contribution Accepted!';
+        notifMsg = `Your ${contrib.course.code} paper was accepted at ${finalApprovedAmount} ETB. Payout will be issued soon.`;
+      } else if (newStatus === ContributionStatus.OFFER_MADE) {
+        notifTitle = 'Counter-Offer Received';
+        notifMsg = `Admin made an offer of ${finalApprovedAmount} ETB for your ${contrib.course.code} submission.`;
+      } else if (newStatus === ContributionStatus.CHANGES_REQUESTED) {
+        notifTitle = 'Clearer Scan Requested';
+        notifMsg = `Please upload a clearer scan for ${contrib.course.code}: ${reason || 'Pages are blurry or poorly aligned.'}`;
+      } else if (newStatus === ContributionStatus.REJECTED) {
+        notifTitle = 'Contribution Rejected';
+        notifMsg = `Your ${contrib.course.code} submission was declined: ${reason}`;
+      }
+
+      await prisma.notification.create({
+        data: {
+          userId: contrib.studentId,
+          title: notifTitle,
+          message: notifMsg,
+          type: newStatus === ContributionStatus.REJECTED ? 'WARNING' : 'INFO',
+        },
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          action: `Contribution review: ${action}`,
+          entityType: 'PaperContribution',
+          entityId: contrib.id,
+          actorId: actor?.id || null,
+          riskLevel: AuditRiskLevel.LOW,
+          details: { action, newStatus, approvedPayoutEtb: finalApprovedAmount?.toString(), reason },
+        },
+      });
+
+      return sendJson(res, 200, updated);
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/contributions/:id/publish - Publish Contribution to ExamPaper Archive
+    // -------------------------------------------------------------
+    if (pathname.startsWith('/api/contributions/') && pathname.endsWith('/publish') && method === 'POST') {
+      const parts = pathname.split('/');
+      const contribId = parts[3];
+      const actor = await resolveActor(req, undefined, url.searchParams);
+
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to publish exam papers.');
+      }
+
+      const contrib = await prisma.paperContribution.findUnique({
+        where: { id: contribId },
+        include: { course: true, files: true, student: true },
+      });
+
+      if (!contrib) {
+        return sendError(res, 404, 'Contribution not found');
+      }
+
+      const file = contrib.files[0] || {
+        storageKey: `quarantine/${contrib.id}.pdf`,
+        sha256: sha256(`contrib-${contrib.id}`),
+        mimeType: 'application/pdf',
+        sizeBytes: 2500000,
+      };
+
+      // Real storage promotion: copy from quarantine/ to published/
+      const publishedKey = generateRandomStorageKey(
+        'published',
+        'pdf',
+        contrib.course.code.replace(/\s+/g, '')
+      );
+
+      const quarantineData = await storage.download(file.storageKey);
+      if (quarantineData) {
+        await storage.upload(publishedKey, quarantineData, file.mimeType);
+      } else {
+        const placeholderPdf = Buffer.from(
+          `%PDF-1.4\n%ExamVault Published Paper: ${contrib.course.code}\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n%%EOF`
+        );
+        await storage.upload(publishedKey, placeholderPdf, file.mimeType);
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        // Create published ExamPaper with unique link to contribution
+        const examPaper = await tx.examPaper.create({
+          data: {
+            courseId: contrib.courseId,
+            title: `${contrib.course.code} · ${contrib.examType} Exam ${contrib.academicYearEc} E.C.`,
+            examType: contrib.examType,
+            examYearEc: contrib.academicYearEc,
+            quality: ScanQuality.EXCELLENT,
+            pageCount: 6,
+            storageKey: publishedKey,
+            sha256: file.sha256,
+            mimeType: file.mimeType,
+            fileSizeBytes: file.sizeBytes,
+            isFreeSample: false,
+            status: PaperStatus.PUBLISHED,
+            uploadedById: contrib.studentId,
+            publishedAt: new Date(),
+          },
+        });
+
+        // Set contribution status to PUBLISHED
+        const updatedContrib = await tx.paperContribution.update({
+          where: { id: contribId },
+          data: {
+            status: ContributionStatus.PUBLISHED,
+            examPaperId: examPaper.id,
+            reviewedById: actor?.id || null,
+            reviewedAt: new Date(),
+          },
+          include: { course: true },
+        });
+
+        // Notification
+        await tx.notification.create({
+          data: {
+            userId: contrib.studentId,
+            title: 'Exam Paper Published!',
+            message: `Your ${contrib.course.code} exam paper has been officially published to the Woliso Campus archive! Your payout is in the payout queue.`,
+            type: 'SUCCESS',
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            action: 'Contribution promoted and published to ExamPaper',
+            entityType: 'PaperContribution',
+            entityId: contrib.id,
+            actorId: actor?.id || null,
+            riskLevel: AuditRiskLevel.LOW,
+            details: {
+              contributionId: contrib.id,
+              examPaperId: examPaper.id,
+              publishedKey,
+              courseCode: contrib.course.code,
+            },
+          },
+        });
+
+        return { contribution: updatedContrib, examPaper };
+      });
+
+      return sendJson(res, 200, result);
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/contributions/:id/payout - Record Transfer Reference & Settle Payout
+    // -------------------------------------------------------------
+    if (pathname.startsWith('/api/contributions/') && pathname.endsWith('/payout') && method === 'POST') {
+      const parts = pathname.split('/');
+      const contribId = parts[3];
+      const body = await parseBody(req);
+      const actor = await resolveActor(req, body, url.searchParams);
+
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.PAYMENT_VERIFIER)) {
+        return sendError(res, 403, 'Content managers and unauthorized users are not authorized to disburse payouts.');
+      }
+
+      const payoutTxId = body.payoutTxId?.trim();
+      if (!payoutTxId) {
+        return sendError(res, 400, 'Unique payout transfer reference (payoutTxId) is required.');
+      }
+
+      // Check unique transfer reference
+      const existingTx = await prisma.paperContribution.findUnique({
+        where: { payoutTxId },
+      });
+      if (existingTx && existingTx.id !== contribId) {
+        return sendError(res, 409, `Transfer reference ${payoutTxId} has already been recorded for another payout.`);
+      }
+
+      const contrib = await prisma.paperContribution.findUnique({
+        where: { id: contribId },
+        include: { course: true, student: true },
+      });
+
+      if (!contrib) {
+        return sendError(res, 404, 'Contribution not found');
+      }
+
+      if (contrib.status === ContributionStatus.PAID) {
+        return sendError(res, 409, 'This contribution has already been paid out.');
+      }
+
+      // Sole amount used for payout is approvedPayoutEtb! Client cannot change it.
+      const settleAmount = Number(contrib.approvedPayoutEtb || contrib.proposedPayoutEtb || 100);
+
+      const paidContrib = await prisma.$transaction(async (tx) => {
+        const updated = await tx.paperContribution.update({
+          where: { id: contribId },
+          data: {
+            status: ContributionStatus.PAID,
+            payoutTxId,
+            approvedPayoutEtb: settleAmount,
+          },
+          include: { course: true },
+        });
+
+        await tx.notification.create({
+          data: {
+            userId: contrib.studentId,
+            title: 'Payout Disbursed!',
+            message: `Payment of ${settleAmount} ETB was transferred to your ${contrib.payoutPaymentMethod} account (${contrib.payoutAccount}). Reference: ${payoutTxId}.`,
+            type: 'SUCCESS',
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            action: 'Contribution payout settled and marked PAID',
+            entityType: 'PaperContribution',
+            entityId: contrib.id,
+            actorId: actor?.id || null,
+            riskLevel: AuditRiskLevel.MEDIUM,
+            details: {
+              contributionId: contrib.id,
+              payoutTxId,
+              payoutAccount: contrib.payoutAccount,
+              amountEtb: settleAmount.toString(),
+            },
+          },
+        });
+
+        return updated;
+      });
+
+      return sendJson(res, 200, paidContrib);
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/contributions/:id/approve - Legacy/Direct Buyout Approval (Sets ACCEPTED & links paper)
     // -------------------------------------------------------------
     if (pathname.startsWith('/api/contributions/') && pathname.endsWith('/approve') && method === 'POST') {
       const parts = pathname.split('/');
       const contribId = parts[3];
       const body = await parseBody(req);
+      const actor = await resolveActor(req, body, url.searchParams);
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Permission denied: Only administrators and content managers can approve contributions.');
+      }
       const reviewerId = body.reviewerId;
       const approvedPayoutEtb = Number(body.approvedPayoutEtb) || 100.00;
       const payoutTxId = body.payoutTxId || `TB_PAYOUT_${Math.floor(1000 + Math.random() * 9000)}`;
@@ -1047,7 +1887,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             title: `${contrib.course.code} · ${contrib.examType} Exam ${contrib.academicYearEc} E.C.`,
             examType: contrib.examType,
             examYearEc: contrib.academicYearEc,
-            quality: 'EXCELLENT',
+            quality: ScanQuality.EXCELLENT,
             pageCount: 6,
             storageKey: file.storageKey.replace('quarantine/', 'published/'),
             sha256: file.sha256,
@@ -1060,7 +1900,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           },
         });
 
-        // Update Contribution to ACCEPTED / PAID and link paper
+        // Update Contribution to ACCEPTED and link paper
         const updatedContrib = await tx.paperContribution.update({
           where: { id: contribId },
           data: {
@@ -1115,7 +1955,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // -------------------------------------------------------------
     if (pathname === '/api/settings' && method === 'POST') {
       const body = await parseBody(req);
-      const actorId = body.actorId;
+      const actor = await resolveActor(req, body, url.searchParams);
+      if (!actor || actor.role !== Role.ADMIN) {
+        return sendError(res, 403, 'Permission denied: Only administrators can update platform settings.');
+      }
+      const actorId = actor.id;
       const updates = body.settings as Record<string, string>;
 
       if (!updates || typeof updates !== 'object') {
@@ -1177,6 +2021,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // POST /api/upload - Secure File Upload with Magic Bytes Verification
     // -------------------------------------------------------------
     if (pathname === '/api/upload' && method === 'POST') {
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1';
+      const rl = await checkRateLimit(`upload:${ip}`, 30, 600);
+      if (!rl.allowed) {
+        return sendError(res, 429, 'Upload rate limit exceeded. Please wait a few minutes before trying again.');
+      }
+
       const body = await parseBody(req);
       const { fileBase64, reportedMime, category, userId } = body;
 
@@ -1275,11 +2125,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     if (pathname.startsWith('/api/papers/') && pathname.endsWith('/access') && method === 'GET') {
       const parts = pathname.split('/');
       const paperId = parts[3];
-      const userId = url.searchParams.get('userId');
+      const actor = await resolveActor(req, undefined, url.searchParams);
 
-      if (!userId) {
+      if (!actor || !actor.user) {
         return sendError(res, 401, 'Authentication required');
       }
+      const userId = actor.id;
 
       const [user, paper, entitlements, activeSessionsCount] = await Promise.all([
         prisma.user.findUnique({
@@ -1423,6 +2274,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
 
       if (!paper || paper.deletedAt !== null) {
         return sendError(res, 404, 'Exam paper not found or has been removed.');
+      }
+
+      if (paper.status !== PaperStatus.PUBLISHED) {
+        return sendError(res, 403, 'Exam paper is not available for streaming.');
       }
 
       const secret = process.env.SESSION_SECRET || 'examvault-secure-local-storage-secret';
@@ -1668,8 +2523,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const body = await parseBody(req);
       const actor = await resolveActor(req, body, url.searchParams);
 
-      if (actor && actor.role === Role.PAYMENT_VERIFIER) {
-        return sendError(res, 403, 'Payment verifiers are not authorized to create or upload exam papers.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to create or upload exam papers.');
       }
 
       const rawList: any[] = Array.isArray(body.bulk) ? body.bulk : [body];
@@ -1806,8 +2661,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const body = await parseBody(req);
       const actor = await resolveActor(req, body, url.searchParams);
 
-      if (actor && actor.role === Role.PAYMENT_VERIFIER) {
-        return sendError(res, 403, 'Payment verifiers are not authorized to edit exam papers.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to edit exam papers.');
       }
 
       const existing = await prisma.examPaper.findUnique({ where: { id: paperId } });
@@ -1859,8 +2714,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const body = await parseBody(req);
       const actor = await resolveActor(req, body, url.searchParams);
 
-      if (actor && actor.role === Role.PAYMENT_VERIFIER) {
-        return sendError(res, 403, 'Payment verifiers are not authorized to replace paper files.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to replace paper files.');
       }
 
       const existing = await prisma.examPaper.findUnique({
@@ -1960,8 +2815,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const paperId = parts[3];
       const actor = await resolveActor(req, undefined, url.searchParams);
 
-      if (actor && actor.role === Role.PAYMENT_VERIFIER) {
-        return sendError(res, 403, 'Payment verifiers are not authorized to delete exam papers.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to delete exam papers.');
       }
 
       const existing = await prisma.examPaper.findUnique({ where: { id: paperId } });
@@ -1999,8 +2854,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const paperId = parts[3];
       const actor = await resolveActor(req, undefined, url.searchParams);
 
-      if (actor && actor.role === Role.PAYMENT_VERIFIER) {
-        return sendError(res, 403, 'Payment verifiers are not authorized to restore exam papers.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to restore exam papers.');
       }
 
       const existing = await prisma.examPaper.findUnique({ where: { id: paperId } });
@@ -2045,8 +2900,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const body = await parseBody(req);
       const actor = await resolveActor(req, body, url.searchParams);
 
-      if (actor && actor.role === Role.PAYMENT_VERIFIER) {
-        return sendError(res, 403, 'Payment verifiers are not authorized to manage wanted papers.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to manage wanted papers.');
       }
 
       const { courseId, examType = 'FINAL', offeredPriceEtb = 100, notes } = body;
@@ -2090,8 +2945,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const body = await parseBody(req);
       const actor = await resolveActor(req, body, url.searchParams);
 
-      if (actor && actor.role === Role.PAYMENT_VERIFIER) {
-        return sendError(res, 403, 'Payment verifiers are not authorized to manage wanted papers.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to manage wanted papers.');
       }
 
       const updated = await prisma.wantedPaper.update({
@@ -2112,8 +2967,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const wantedId = parts[3];
       const actor = await resolveActor(req, undefined, url.searchParams);
 
-      if (actor && actor.role === Role.PAYMENT_VERIFIER) {
-        return sendError(res, 403, 'Payment verifiers are not authorized to manage wanted papers.');
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to manage wanted papers.');
       }
 
       await prisma.wantedPaper.delete({ where: { id: wantedId } });
@@ -2125,7 +2980,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // -------------------------------------------------------------
     if (pathname === '/api/users' && method === 'GET') {
       const actor = await resolveActor(req, undefined, url.searchParams);
-      if (actor && (actor.role === Role.CONTENT_MANAGER || actor.role === Role.STUDENT)) {
+      if (!actor || actor.role === Role.CONTENT_MANAGER || actor.role === Role.STUDENT) {
         return sendError(res, 403, 'Content managers and students are not authorized to view users or roles.');
       }
 
@@ -2156,8 +3011,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const targetUserId = parts[3];
       const actor = await resolveActor(req, undefined, url.searchParams);
 
-      if (actor && (actor.role === Role.CONTENT_MANAGER || (actor.role === Role.STUDENT && actor.id !== targetUserId))) {
-        return sendError(res, 403, 'Content managers are not authorized to view user access history.');
+      if (!actor || actor.role === Role.CONTENT_MANAGER || (actor.role === Role.STUDENT && actor.id !== targetUserId)) {
+        return sendError(res, 403, 'Content managers and unauthorized users are not authorized to view user access history.');
       }
 
       const [user, entitlements, payments, views] = await Promise.all([
@@ -2231,7 +3086,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const body = await parseBody(req);
       const actor = await resolveActor(req, body, url.searchParams);
 
-      if (actor && (actor.role === Role.CONTENT_MANAGER || actor.role === Role.STUDENT)) {
+      if (!actor || actor.role === Role.CONTENT_MANAGER || actor.role === Role.STUDENT) {
         return sendError(res, 403, 'Content managers and students are not authorized to modify users.');
       }
 
@@ -2287,6 +3142,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // GET /api/audit-logs - Read-Only Cryptographic Audit Log Viewer
     // -------------------------------------------------------------
     if (pathname === '/api/audit-logs' && method === 'GET') {
+      const actor = await resolveActor(req, undefined, url.searchParams);
+      if (!actor || actor.role !== Role.ADMIN) {
+        return sendError(res, 403, 'Permission denied: Only administrators can view audit logs.');
+      }
       const risk = url.searchParams.get('riskLevel') as AuditRiskLevel | null;
       const entityType = url.searchParams.get('entityType');
       const search = url.searchParams.get('search')?.toLowerCase();

@@ -11,11 +11,17 @@ export type PaymentMethod = 'TELEBIRR' | 'CBE_BIRR' | 'BANK_TRANSFER';
 export type PaymentStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
 export type ContributionStatus =
-  | 'PENDING'
+  | 'SUBMITTED'
   | 'IN_REVIEW'
+  | 'CHANGES_REQUESTED'
+  | 'OFFER_MADE'
+  | 'ACCEPTED'
+  | 'PUBLISHED'
+  | 'PAID'
+  | 'REJECTED'
+  | 'PENDING'
   | 'APPROVED_PENDING_PAYOUT'
-  | 'PAID_OUT'
-  | 'REJECTED';
+  | 'PAID_OUT';
 
 export type PaperRequestStatus = 'OPEN' | 'IN_PROGRESS' | 'FULFILLED' | 'CLOSED';
 
@@ -34,6 +40,7 @@ export interface UserSession {
   programName?: string | null;
   stream?: StreamCode | null;
   currentYear: number | null;
+  mustChangePassword?: boolean;
 }
 
 export interface ProgramSummary {

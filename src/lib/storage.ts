@@ -309,18 +309,20 @@ export class CloudflareR2StorageAdapter implements StorageAdapter {
     bucketName?: string;
     endpoint?: string;
   }) {
-    const accountId = config?.accountId || process.env.R2_ACCOUNT_ID;
-    const accessKeyId = config?.accessKeyId || process.env.R2_ACCESS_KEY_ID || "";
-    const secretAccessKey = config?.secretAccessKey || process.env.R2_SECRET_ACCESS_KEY || "";
-    this.bucket = config?.bucketName || process.env.R2_BUCKET_NAME || "examvault-private";
+    const accountId = config?.accountId || process.env.R2_ACCOUNT_ID || process.env.S3_ACCOUNT_ID;
+    const accessKeyId = config?.accessKeyId || process.env.R2_ACCESS_KEY_ID || process.env.S3_ACCESS_KEY_ID || "";
+    const secretAccessKey = config?.secretAccessKey || process.env.R2_SECRET_ACCESS_KEY || process.env.S3_SECRET_ACCESS_KEY || "";
+    this.bucket = config?.bucketName || process.env.R2_BUCKET_NAME || process.env.S3_BUCKET_NAME || "examvault-private";
 
     const endpoint =
       config?.endpoint ||
       process.env.R2_ENDPOINT ||
+      process.env.S3_ENDPOINT ||
       (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined);
+    const region = process.env.S3_REGION || process.env.R2_REGION || "auto";
 
     this.client = new S3Client({
-      region: "auto",
+      region,
       endpoint,
       credentials: {
         accessKeyId,
@@ -415,9 +417,12 @@ export function getStorageAdapter(): StorageAdapter {
   if (currentStorage) return currentStorage;
 
   const provider = process.env.STORAGE_PROVIDER?.toLowerCase();
-  const hasR2Creds = Boolean(process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY);
+  const hasCreds = Boolean(
+    (process.env.R2_ACCESS_KEY_ID || process.env.S3_ACCESS_KEY_ID) &&
+    (process.env.R2_SECRET_ACCESS_KEY || process.env.S3_SECRET_ACCESS_KEY)
+  );
 
-  if ((provider === "r2" || provider === "s3") && hasR2Creds) {
+  if ((provider === "r2" || provider === "s3") && hasCreds) {
     currentStorage = new CloudflareR2StorageAdapter();
   } else {
     currentStorage = new LocalStorageAdapter();

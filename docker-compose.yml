@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: examvault-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: examvault_user
+      POSTGRES_PASSWORD: secret_password
+      POSTGRES_DB: examvault_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U examvault_user -d examvault_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
