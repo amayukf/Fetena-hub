@@ -319,6 +319,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       return sendJson(res, 201, {
         token: rawToken,
         user: {
+          id: user.id,
           userId: user.id,
           fullName: user.fullName,
           email: user.email,
@@ -340,7 +341,9 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // -------------------------------------------------------------
     if (pathname === '/api/auth/login' && method === 'POST') {
       const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1';
-      const rl = await checkRateLimit(`login:${ip}`, 5, 900);
+      const isProd = process.env.NODE_ENV === 'production';
+      const maxLoginAttempts = isProd ? 5 : 50;
+      const rl = await checkRateLimit(`login:${ip}`, maxLoginAttempts, 900);
       if (!rl.allowed) {
         return sendError(res, 429, 'Too many login attempts. Please try again in 15 minutes.');
       }
@@ -407,12 +410,16 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         },
       });
 
+      // Clear any failed login attempt counters for this IP upon successful authentication
+      await prisma.rateLimit.deleteMany({ where: { key: `login:${ip}` } });
+
       const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000`;
       const streamCode = (user.program?.code as StreamCode) || (user.role === Role.STUDENT ? 'NAT_SCI' : null);
 
       return sendJson(res, 200, {
         token: rawToken,
         user: {
+          id: user.id,
           userId: user.id,
           fullName: user.fullName,
           email: user.email,
@@ -458,6 +465,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       return sendJson(res, 200, {
         authenticated: true,
         user: {
+          id: user.id,
           userId: user.id,
           fullName: user.fullName,
           email: user.email,
@@ -814,10 +822,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       }
 
       const { programTermId, paymentMethod, transactionId, screenshotUrl } = parsed.data;
-      const userId = rawBody.userId;
+      const actor = await resolveActor(req, rawBody, url.searchParams);
+      const userId = actor?.id || rawBody.userId;
 
       if (!userId) {
-        return sendError(res, 400, 'User ID is required');
+        return sendError(res, 400, 'User ID is required. Please ensure you are logged in.');
       }
 
       // Resolve programTermId

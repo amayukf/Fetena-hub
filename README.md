@@ -20,8 +20,9 @@ cd "d:/ExamVault Web App Prototype"
 # 2. Install dependencies
 npm install
 
-# 3. Start local PostgreSQL via Docker Compose
-docker compose up -d
+# 3. Database:
+# Note: A native PostgreSQL service is already active on port 5432 on this machine!
+# (If Docker is installed, you can optionally run: docker compose up -d)
 
 # 4. Generate Prisma Client and apply migrations & database triggers
 npx prisma generate
