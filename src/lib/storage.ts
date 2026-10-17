@@ -92,7 +92,7 @@ export function detectFileSignature(data: Buffer | Uint8Array): FileSignatureRes
 
   return {
     valid: false,
-    error: "Invalid file signature (magic bytes). Only authentic PDF, JPG, and PNG files are accepted.",
+    error: "Invalid file format: Invalid file signature (magic bytes). Only authentic PDF, JPG, and PNG files are accepted.",
   };
 }
 
@@ -198,16 +198,25 @@ export function computeSha256(data: Buffer | Uint8Array): string {
   return crypto.createHash("sha256").update(data).digest("hex");
 }
 
-export function signStreamTicket(key: string, expiresAtMs: number, secret: string): string {
+export function signStreamTicket(key: string, expiresAtMs: number, secret: string, userBinding?: string): string {
+  const payload = userBinding ? `${key}:${userBinding}:${expiresAtMs}` : `${key}:${expiresAtMs}`;
   return crypto
     .createHmac("sha256", secret)
-    .update(`${key}:${expiresAtMs}`)
+    .update(payload)
     .digest("hex");
 }
 
-export function verifyStreamTicket(key: string, expiresAtMs: number, signature: string, secret: string): boolean {
+export function verifyStreamTicket(key: string, expiresAtMs: number, signature: string, secret: string, userBinding?: string): boolean {
   if (!signature || typeof signature !== "string" || Date.now() > expiresAtMs) {
     return false;
+  }
+  if (userBinding) {
+    const expectedWithUser = signStreamTicket(key, expiresAtMs, secret, userBinding);
+    const sigBuf = Buffer.from(signature, "hex");
+    const expectedBuf = Buffer.from(expectedWithUser, "hex");
+    if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      return true;
+    }
   }
   const expected = signStreamTicket(key, expiresAtMs, secret);
   const sigBuf = Buffer.from(signature, "hex");
@@ -228,7 +237,13 @@ export class LocalStorageAdapter implements StorageAdapter {
 
   constructor(baseDir?: string, secret?: string) {
     this.baseDir = baseDir || path.resolve(process.cwd(), "storage");
-    this.secret = secret || process.env.SESSION_SECRET || "examvault-secure-local-storage-secret";
+    const resolvedSecret = secret || process.env.SESSION_SECRET;
+    if (!resolvedSecret || resolvedSecret.length < 32) {
+      throw new Error(
+        "FATAL: SESSION_SECRET (>= 32 characters) is required to sign private storage URLs."
+      );
+    }
+    this.secret = resolvedSecret;
     this.ensureDirs();
   }
 
@@ -422,7 +437,14 @@ export function getStorageAdapter(): StorageAdapter {
     (process.env.R2_SECRET_ACCESS_KEY || process.env.S3_SECRET_ACCESS_KEY)
   );
 
-  if ((provider === "r2" || provider === "s3") && hasCreds) {
+  if (provider === "r2" || provider === "s3") {
+    // SECURITY: never silently fall back to ephemeral local disk in a
+    // cloud-storage deployment — private papers and receipts could be lost.
+    if (!hasCreds) {
+      throw new Error(
+        `FATAL: STORAGE_PROVIDER="${provider}" requires S3/R2 credentials. Refusing to fall back to local disk storage.`
+      );
+    }
     currentStorage = new CloudflareR2StorageAdapter();
   } else {
     currentStorage = new LocalStorageAdapter();
