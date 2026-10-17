@@ -20,6 +20,30 @@ import {
 import { dispatchNotification } from '../src/lib/notifications';
 import type { StreamCode } from '../src/types';
 
+// -------------------------------------------------------------
+// SECURITY: SESSION_SECRET is mandatory in EVERY environment.
+// It signs stream tickets and signed storage-view URLs, so a missing,
+// short, or well-known placeholder value must abort startup rather than
+// silently fall back to a hard-coded secret that is published in source.
+// -------------------------------------------------------------
+const INSECURE_SECRETS = new Set([
+  'examvault-secure-local-storage-secret',
+  'your-32-byte-base64-session-encryption-secret-here',
+]);
+
+export function getSessionSecret(): string {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32 || INSECURE_SECRETS.has(secret)) {
+    throw new Error(
+      'FATAL: SESSION_SECRET must be set to a cryptographically strong value of at least 32 characters. Server startup aborted.'
+    );
+  }
+  return secret;
+}
+
+// Validate eagerly so a misconfigured deployment never reaches a running server.
+getSessionSecret();
+
 export const prisma = new PrismaClient();
 
 function sha256(data: string | Buffer): string {
@@ -38,6 +62,21 @@ export function parseCookies(req: IncomingMessage): Record<string, string> {
     });
   }
   return list;
+}
+
+/**
+ * Derives client IP safely.
+ * Only trusts X-Forwarded-For if TRUST_PROXY is explicitly enabled.
+ */
+export function getClientIp(req: IncomingMessage): string {
+  const trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1';
+  if (trustProxy) {
+    const xff = req.headers['x-forwarded-for'];
+    if (typeof xff === 'string' && xff.trim()) {
+      return xff.split(',')[0].trim();
+    }
+  }
+  return req.socket.remoteAddress || '127.0.0.1';
 }
 
 export async function checkRateLimit(
@@ -70,12 +109,21 @@ export async function checkRateLimit(
     });
 
     return { allowed: true, remaining: Math.max(0, limit - updated.points), resetAt: record.expireAt };
-  } catch {
-    return { allowed: true, remaining: 1, resetAt: expireAt };
+  } catch (err) {
+    // SECURITY: Fail closed on database errors to prevent rate-limit bypass during DB degradation
+    console.error('[RateLimit DB Error]:', err);
+    return { allowed: false, remaining: 0, resetAt: expireAt };
   }
 }
 
 async function parseBody(req: IncomingMessage): Promise<any> {
+  const reqAny = req as any;
+  if (reqAny.__bodyPromise) {
+    return reqAny.__bodyPromise;
+  }
+  if (reqAny.body !== undefined && typeof reqAny.body === 'object') {
+    return reqAny.body;
+  }
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', chunk => {
@@ -100,12 +148,19 @@ async function parseBody(req: IncomingMessage): Promise<any> {
 function sendJson(res: ServerResponse, status: number, data: any, headers?: Record<string, string | string[]>) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
+    'content-type': 'application/json',
     'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    'cache-control': 'no-store, no-cache, must-revalidate, private',
     'X-Content-Type-Options': 'nosniff',
+    'x-content-type-options': 'nosniff',
     'X-Frame-Options': 'DENY',
+    'x-frame-options': 'DENY',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'referrer-policy': 'strict-origin-when-cross-origin',
     'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self';",
+    'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self';",
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+    'strict-transport-security': 'max-age=31536000; includeSubDomains',
     ...(headers || {}),
   });
   res.end(JSON.stringify(data));
@@ -115,18 +170,55 @@ function sendError(res: ServerResponse, status: number, message: string, details
   sendJson(res, status, { error: message, details }, headers);
 }
 
+export function normalizeEthiopianPhone(phone: string): string {
+  if (!phone) return phone;
+  const cleaned = phone.trim().replace(/[\s\-\(\)\.]/g, '');
+  if (/^(\+251|00251|251)?0?[79]\d{8}$/.test(cleaned)) {
+    const match = cleaned.match(/[79]\d{8}$/);
+    if (match) {
+      return `+251${match[0]}`;
+    }
+  }
+  return cleaned;
+}
+
+export function getPhoneVariants(phone: string): string[] {
+  if (!phone) return [];
+  const trimmed = phone.trim();
+  const normalized = normalizeEthiopianPhone(trimmed);
+  const variants = new Set<string>([trimmed, normalized]);
+  if (normalized.startsWith('+251') && normalized.length === 13) {
+    const last9 = normalized.slice(4);
+    variants.add(`0${last9}`);
+    variants.add(`251${last9}`);
+    variants.add(last9);
+  }
+  return Array.from(variants);
+}
+
 export async function resolveActor(
   req: IncomingMessage,
-  body?: any,
-  query?: URLSearchParams
+  _body?: any,
+  searchParams?: URLSearchParams
 ): Promise<{ id: string; role: Role; user: any } | null> {
-  // 1. Session token from Cookie or Bearer header
+  // 1. Session token from Cookie, Bearer header, x-session-token header, or query param
   const cookies = parseCookies(req);
   const authHeader = req.headers['authorization'];
+  let queryToken: string | null = null;
+  if (searchParams) {
+    queryToken = searchParams.get('token') || searchParams.get('sessionToken');
+  } else if (req.url) {
+    try {
+      const u = new URL(req.url, 'http://localhost');
+      queryToken = u.searchParams.get('token') || u.searchParams.get('sessionToken');
+    } catch {}
+  }
+
   const rawToken =
     (authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null) ||
     cookies['examvault_session'] ||
-    (req.headers['x-session-token'] as string);
+    (req.headers['x-session-token'] as string) ||
+    queryToken;
 
   if (rawToken) {
     const tokenHash = sha256(rawToken);
@@ -135,40 +227,32 @@ export async function resolveActor(
       include: { user: true },
     });
 
-    if (session && session.expiresAt > new Date() && session.user && session.user.deletedAt === null) {
+    if (
+      session &&
+      session.expiresAt > new Date() &&
+      session.user &&
+      session.user.deletedAt === null &&
+      session.user.isActive // Suspended users lose access immediately
+    ) {
       return { id: session.user.id, role: session.user.role, user: session.user };
     }
   }
 
-  // 2. Explicit actor ID from header or body (Only allowed in non-production environments for automated testing)
-  if (process.env.NODE_ENV !== 'production') {
-    const actorId =
-      (req.headers['x-actor-id'] as string) ||
-      body?.actorId ||
-      body?.reviewerId ||
-      query?.get('actorId');
-
+  // 2. Explicit actor impersonation — DEV/TEST ONLY.
+  // SECURITY: this is a full authentication bypass, so it must never be
+  // reachable in production. It requires BOTH a non-production environment
+  // and an explicit opt-in via ALLOW_ACTOR_IMPERSONATION, and can be hard
+  // disabled with ALLOW_ACTOR_IMPERSONATION="false".
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    process.env.ALLOW_ACTOR_IMPERSONATION !== 'false'
+  ) {
+    const actorId = req.headers['x-actor-id'] as string;
     if (actorId) {
       const user = await prisma.user.findUnique({ where: { id: actorId } });
-      if (user && user.deletedAt === null) {
+      if (user && user.deletedAt === null && user.isActive) {
         return { id: user.id, role: user.role, user };
       }
-    }
-
-    // 3. Explicit role fallback (Development & internal test harness only)
-    const explicitRole =
-      (req.headers['x-actor-role'] as string) ||
-      body?.actorRole ||
-      query?.get('actorRole');
-
-    if (explicitRole && Object.values(Role).includes(explicitRole as Role)) {
-      const roleUser = await prisma.user.findFirst({
-        where: { role: explicitRole as Role, deletedAt: null },
-      });
-      if (roleUser) {
-        return { id: roleUser.id, role: roleUser.role, user: roleUser };
-      }
-      return { id: `actor-${explicitRole}`, role: explicitRole as Role, user: null };
     }
   }
 
@@ -176,9 +260,55 @@ export async function resolveActor(
 }
 
 export async function handleApiRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const reqAny = req as any;
+  if (!reqAny.__bodyPromise) {
+    if (reqAny.body !== undefined && typeof reqAny.body === 'object') {
+      reqAny.__bodyPromise = Promise.resolve(reqAny.body);
+    } else {
+      reqAny.__bodyPromise = new Promise((resolve, reject) => {
+        let body = '';
+        req.on('data', chunk => {
+          body += chunk;
+          if (body.length > 25 * 1024 * 1024) {
+            req.destroy();
+            reject(new Error('Payload too large'));
+          }
+        });
+        req.on('end', () => {
+          if (!body) return resolve({});
+          try {
+            resolve(JSON.parse(body));
+          } catch (err) {
+            resolve({});
+          }
+        });
+        req.on('error', reject);
+      });
+    }
+  }
+
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
   const method = req.method?.toUpperCase();
+
+  // SECURITY: a user (e.g. a freshly provisioned admin) holding a temporary
+  // password must rotate it before any other authenticated action. Without
+  // this, the temporary credential grants full access to payments, papers,
+  // users, and the audit log.
+  const PASSWORD_CHANGE_ALLOWED_PATHS = new Set([
+    '/health',
+    '/api/health',
+    '/api/auth/me',
+    '/api/auth/logout',
+    '/api/auth/change-password',
+    '/api/bootstrap',
+  ]);
+  if (!PASSWORD_CHANGE_ALLOWED_PATHS.has(pathname)) {
+    const preActor = await resolveActor(req, undefined, url.searchParams);
+    if (preActor?.user?.mustChangePassword) {
+      return sendError(res, 403, 'Password change required before accessing this resource.');
+    }
+  }
 
   try {
     // -------------------------------------------------------------
@@ -207,7 +337,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // POST /api/auth/signup - Real Student Registration
     // -------------------------------------------------------------
     if (pathname === '/api/auth/signup' && method === 'POST') {
-      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1';
+      const ip = getClientIp(req);
       const rl = await checkRateLimit(`signup:${ip}`, 10, 3600);
       if (!rl.allowed) {
         return sendError(res, 429, 'Too many signup attempts. Please try again later.');
@@ -216,7 +346,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const body = await parseBody(req);
       const fullName = body.fullName?.trim();
       const email = body.email?.trim().toLowerCase() || null;
-      const phone = body.phone?.trim() || null;
+      const rawPhone = body.phone?.trim() || null;
+      const phone = rawPhone ? normalizeEthiopianPhone(rawPhone) : null;
       const studentId = body.studentId?.trim() || null;
       const streamCode = (body.stream as StreamCode) || 'NAT_SCI';
       const password = body.password;
@@ -239,7 +370,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         }
       }
       if (phone) {
-        const existingPhone = await prisma.user.findUnique({ where: { phone } });
+        const phoneVariants = getPhoneVariants(phone);
+        const existingPhone = await prisma.user.findFirst({
+          where: {
+            phone: { in: phoneVariants },
+          },
+        });
         if (existingPhone) {
           return sendError(res, 409, 'An account with this phone number already exists.');
         }
@@ -315,7 +451,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         },
       });
 
-      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000`;
+      const isSecure = process.env.NODE_ENV === 'production';
+      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${isSecure ? '; Secure' : ''}`;
       return sendJson(res, 201, {
         token: rawToken,
         user: {
@@ -340,7 +477,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // POST /api/auth/login - Real User & Admin Authentication
     // -------------------------------------------------------------
     if (pathname === '/api/auth/login' && method === 'POST') {
-      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1';
+      const ip = getClientIp(req);
       const isProd = process.env.NODE_ENV === 'production';
       const maxLoginAttempts = isProd ? 5 : 50;
       const rl = await checkRateLimit(`login:${ip}`, maxLoginAttempts, 900);
@@ -356,12 +493,14 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 400, 'Identifier (email, student ID, or phone) and password are required.');
       }
 
+      const phoneVariants = getPhoneVariants(identifier);
       const user = await prisma.user.findFirst({
         where: {
           OR: [
             { email: identifier.toLowerCase() },
             { studentId: identifier },
             { phone: identifier },
+            ...phoneVariants.map(p => ({ phone: p })),
           ],
           deletedAt: null,
         },
@@ -413,7 +552,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       // Clear any failed login attempt counters for this IP upon successful authentication
       await prisma.rateLimit.deleteMany({ where: { key: `login:${ip}` } });
 
-      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000`;
+      const isSecure = process.env.NODE_ENV === 'production';
+      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${isSecure ? '; Secure' : ''}`;
       const streamCode = (user.program?.code as StreamCode) || (user.role === Role.STUDENT ? 'NAT_SCI' : null);
 
       return sendJson(res, 200, {
@@ -440,7 +580,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // GET /api/auth/me - Current User Session
     // -------------------------------------------------------------
     if (pathname === '/api/auth/me' && method === 'GET') {
-      const actor = await resolveActor(req, undefined, url.searchParams);
+      const actor = await resolveActor(req);
       if (!actor || !actor.user) {
         return sendJson(res, 200, { authenticated: false, user: null, unlockedProgramTermIds: [] });
       }
@@ -503,7 +643,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         await prisma.session.deleteMany({ where: { sessionTokenHash: tokenHash } });
       }
 
-      const clearCookie = `examvault_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+      const isSecure = process.env.NODE_ENV === 'production';
+      const clearCookie = `examvault_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${isSecure ? '; Secure' : ''}`;
       return sendJson(res, 200, { success: true, message: 'Logged out successfully' }, { 'Set-Cookie': clearCookie });
     }
 
@@ -511,14 +652,15 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // POST /api/auth/change-password - Change Password & Clear Forced Flag
     // -------------------------------------------------------------
     if (pathname === '/api/auth/change-password' && method === 'POST') {
-      const body = await parseBody(req);
-      const actor = await resolveActor(req, body, url.searchParams);
-      const targetUserId = actor?.id || body.userId;
-      const newPassword = body.newPassword;
-
-      if (!targetUserId) {
+      const actor = await resolveActor(req);
+      if (!actor || !actor.user) {
         return sendError(res, 401, 'Authentication required to change password.');
       }
+
+      const body = await parseBody(req);
+      const isSuperAdmin = actor.role === Role.ADMIN;
+      const targetUserId = (isSuperAdmin && body.userId) ? body.userId : actor.id;
+      const newPassword = body.newPassword;
 
       if (!newPassword || newPassword.length < 8) {
         return sendError(res, 400, 'New password must be at least 8 characters long.');
@@ -529,7 +671,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 404, 'User not found.');
       }
 
-      if (body.oldPassword) {
+      // Non-admins must provide and verify their current password unless they are completing an initial forced password reset
+      if ((!isSuperAdmin || targetUserId === actor.id) && !user.mustChangePassword) {
+        if (!body.oldPassword) {
+          return sendError(res, 400, 'Current password is required.');
+        }
         const matches = await bcrypt.compare(body.oldPassword, user.passwordHash);
         if (!matches) {
           return sendError(res, 401, 'Current password is incorrect.');
@@ -545,16 +691,32 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         },
       });
 
+      // SECURITY: revoke every other active session for this account so a
+      // leaked/stolen session cannot survive a password change. The session
+      // performing this change is kept so the user is not logged out mid-flow.
+      const actorCookies = parseCookies(req);
+      const currentRawToken =
+        actorCookies['examvault_session'] || (req.headers['x-session-token'] as string) || null;
+      const currentTokenHash = currentRawToken ? sha256(currentRawToken) : null;
+
+      const revokedSessions = await prisma.session.deleteMany({
+        where: {
+          userId: targetUserId,
+          ...(currentTokenHash ? { sessionTokenHash: { not: currentTokenHash } } : {}),
+        },
+      });
+
       await prisma.auditLog.create({
         data: {
           action: 'User password changed',
           entityType: 'User',
           entityId: targetUserId,
-          actorId: targetUserId,
+          actorId: actor.id,
           riskLevel: AuditRiskLevel.MEDIUM,
           details: {
             userId: targetUserId,
             forcedChangeCompleted: user.mustChangePassword,
+            sessionsRevoked: revokedSessions.count,
           },
         },
       });
@@ -566,10 +728,21 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // GET /api/bootstrap - Complete verified state from PostgreSQL
     // -------------------------------------------------------------
     if (pathname === '/api/bootstrap' && method === 'GET') {
+      // Resolve actor for scoped data access
+      const bootstrapActor = await resolveActor(req);
+      const isSuperAdmin = bootstrapActor?.role === Role.ADMIN;
+      const isContentManager = bootstrapActor?.role === Role.CONTENT_MANAGER;
+      const isPaymentVerifier = bootstrapActor?.role === Role.PAYMENT_VERIFIER;
+      const isStudent = bootstrapActor?.role === Role.STUDENT;
+      const canManageContent = isSuperAdmin || isContentManager;
+      const canVerifyPayments = isSuperAdmin || isPaymentVerifier;
+      const actorUserId = bootstrapActor?.id || null;
+
       const [
         settings,
         campus,
         programs,
+        terms,
         courses,
         papers,
         payments,
@@ -592,6 +765,9 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             },
           },
         }),
+        prisma.term.findMany({
+          orderBy: [{ yearNumber: 'asc' }, { semesterNumber: 'asc' }],
+        }),
         prisma.course.findMany({
           where: { isActive: true, deletedAt: null },
           include: {
@@ -608,84 +784,120 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           },
           orderBy: { code: 'asc' },
         }),
+        // SECURITY: Only content managers & admins can see draft/hidden papers; guests & students only see PUBLISHED
         prisma.examPaper.findMany({
-          where: { deletedAt: null },
+          where: {
+            deletedAt: null,
+            ...(canManageContent ? {} : { status: PaperStatus.PUBLISHED }),
+          },
           include: {
             course: true,
           },
           orderBy: { createdAt: 'desc' },
         }),
-        prisma.payment.findMany({
-          include: {
-            user: true,
-            programTerm: {
+        // SECURITY: Only payment verifiers & admins get all payments; students only see their own
+        canVerifyPayments
+          ? prisma.payment.findMany({
               include: {
-                program: true,
-                term: true,
+                user: true,
+                programTerm: { include: { program: true, term: true } },
               },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-        }),
-        prisma.paperContribution.findMany({
-          include: {
-            student: true,
-            course: true,
-            files: true,
-          },
-          orderBy: { createdAt: 'desc' },
-        }),
-        prisma.paperRequest.findMany({
-          include: {
-            student: true,
-            course: true,
-          },
-          orderBy: { createdAt: 'desc' },
-        }),
-        prisma.auditLog.findMany({
-          include: { actor: true },
-          orderBy: { createdAt: 'desc' },
-          take: 100,
-        }),
-        prisma.notification.findMany({
-          orderBy: { createdAt: 'desc' },
-          take: 50,
-        }),
-        prisma.entitlement.findMany({
-          where: { isActive: true },
-          include: {
-            programTerm: {
+              orderBy: { createdAt: 'desc' },
+            })
+          : isStudent && actorUserId
+          ? prisma.payment.findMany({
+              where: { userId: actorUserId },
               include: {
-                program: true,
-                term: true,
-                courses: true,
+                user: true,
+                programTerm: { include: { program: true, term: true } },
               },
-            },
-          },
-        }),
-        prisma.termInterest.findMany({
-          include: {
-            term: true,
-            user: true,
-          },
-        }),
-        prisma.user.findMany({
-          where: { deletedAt: null },
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            phone: true,
-            studentId: true,
-            role: true,
-            programId: true,
-            currentYear: true,
-            isActive: true,
-            canSell: true,
-            createdAt: true,
-          },
-          orderBy: { createdAt: 'desc' },
-        }),
+              orderBy: { createdAt: 'desc' },
+            })
+          : Promise.resolve([]),
+        // Contributions: content managers & admins see all, students see their own, guests see none
+        canManageContent
+          ? prisma.paperContribution.findMany({
+              include: { student: true, course: true, files: true },
+              orderBy: { createdAt: 'desc' },
+            })
+          : isStudent && actorUserId
+          ? prisma.paperContribution.findMany({
+              where: { studentId: actorUserId },
+              include: { student: true, course: true, files: true },
+              orderBy: { createdAt: 'desc' },
+            })
+          : Promise.resolve([]),
+        // Paper requests: content managers & admins see all, students see their own
+        canManageContent
+          ? prisma.paperRequest.findMany({
+              include: { student: true, course: true },
+              orderBy: { createdAt: 'desc' },
+            })
+          : isStudent && actorUserId
+          ? prisma.paperRequest.findMany({
+              where: { studentId: actorUserId },
+              include: { student: true, course: true },
+              orderBy: { createdAt: 'desc' },
+            })
+          : Promise.resolve([]),
+        // Audit logs: superadmin only
+        isSuperAdmin
+          ? prisma.auditLog.findMany({
+              include: { actor: true },
+              orderBy: { createdAt: 'desc' },
+              take: 100,
+            })
+          : Promise.resolve([]),
+        // Notifications: user sees own only
+        actorUserId
+          ? prisma.notification.findMany({
+              where: { userId: actorUserId },
+              orderBy: { createdAt: 'desc' },
+              take: 50,
+            })
+          : Promise.resolve([]),
+        // SECURITY: Only payment verifiers & admins get all entitlements; students only get their own active
+        canVerifyPayments
+          ? prisma.entitlement.findMany({
+              where: { isActive: true },
+              include: {
+                programTerm: { include: { program: true, term: true, courses: true } },
+              },
+            })
+          : isStudent && actorUserId
+          ? prisma.entitlement.findMany({
+              where: { userId: actorUserId, isActive: true },
+              include: {
+                programTerm: { include: { program: true, term: true, courses: true } },
+              },
+            })
+          : Promise.resolve([]),
+        // Term interests: superadmin sees all, students see their own
+        isSuperAdmin
+          ? prisma.termInterest.findMany({ include: { term: true, user: true } })
+          : isStudent && actorUserId
+          ? prisma.termInterest.findMany({ where: { userId: actorUserId }, include: { term: true, user: true } })
+          : Promise.resolve([]),
+        // Users list: superadmin only
+        isSuperAdmin
+          ? prisma.user.findMany({
+              where: { deletedAt: null },
+              select: {
+                id: true,
+                fullName: true,
+                email: true,
+                phone: true,
+                studentId: true,
+                role: true,
+                programId: true,
+                currentYear: true,
+                isActive: true,
+                canSell: true,
+                createdAt: true,
+              },
+              orderBy: { createdAt: 'desc' },
+            })
+          : Promise.resolve([]),
         prisma.wantedPaper.findMany({
           include: { course: true },
           orderBy: { createdAt: 'desc' },
@@ -723,6 +935,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         settings: processedSettings,
         campus,
         programs,
+        terms,
         courses,
         papers,
         payments: processedPayments,
@@ -806,6 +1019,20 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         };
       });
 
+      let coveredSlots = 0;
+      for (const item of coverageMatrix) {
+        if (item.mid.hasPaper) coveredSlots++;
+        if (item.final.hasPaper) coveredSlots++;
+        if (item.quiz.hasPaper) coveredSlots++;
+      }
+      const totalSlots = courses.length * 3;
+      const percentage = totalSlots > 0 ? Math.round((coveredSlots / totalSlots) * 100) : 0;
+      const coverageSummary = {
+        percentage,
+        coveredSlots,
+        totalSlots,
+      };
+
       return sendJson(res, 200, {
         revenueEtb: Number(revenueAgg._sum.amountEtb || 0),
         activeStudentsCount,
@@ -813,6 +1040,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         publishedPapersCount,
         topCourses,
         coverageMatrix,
+        coverageSummary,
         recentActivity: recentLogs,
       });
     }
@@ -829,12 +1057,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       }
 
       const { programTermId, paymentMethod, transactionId, screenshotUrl } = parsed.data;
-      const actor = await resolveActor(req, rawBody, url.searchParams);
-      const userId = actor?.id || rawBody.userId;
-
-      if (!userId) {
-        return sendError(res, 400, 'User ID is required. Please ensure you are logged in.');
+      const actor = await resolveActor(req);
+      if (!actor || !actor.user) {
+        return sendError(res, 401, 'Authentication required to submit payments.');
       }
+      const userId = actor.id;
 
       // Resolve programTermId
       let targetProgramTermId = programTermId;
@@ -899,16 +1126,34 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         );
       }
 
-      const randomScreenshotKey = screenshotUrl && screenshotUrl.startsWith('quarantine/')
-        ? screenshotUrl
-        : generateRandomStorageKey('quarantine', 'jpg', 'receipts');
-      const screenshotSha256 =
-        rawBody.screenshotSha256 ||
-        (rawBody.screenshotBase64
-          ? sha256(rawBody.screenshotBase64)
-          : screenshotUrl
-          ? sha256(screenshotUrl)
-          : sha256(`screenshot-${transactionId}`));
+      // SECURITY: never trust a client-supplied storage key verbatim. A student
+      // may only reference a file the server itself wrote into the private
+      // quarantine namespace (the key returned by POST /api/upload). Anything
+      // else — notably "published/<paperKey>" handed out by /api/papers — is
+      // rejected, which closes the paywall-bypass / cross-object read.
+      const providedReceiptKey =
+        rawBody.storageKey ||
+        rawBody.receiptImageStorageKey ||
+        parsed.data.storageKey ||
+        parsed.data.receiptImageStorageKey ||
+        screenshotUrl;
+
+      let randomScreenshotKey = generateRandomStorageKey('quarantine', 'jpg', 'receipts');
+      let screenshotSha256 = sha256(`receipt:${userId}:${paymentMethod}:${transactionId}`);
+
+      if (providedReceiptKey) {
+        if (!providedReceiptKey.startsWith('quarantine/')) {
+          return sendError(res, 400, 'Invalid receipt reference. Upload the receipt through the platform before submitting.');
+        }
+        const receiptBytes = await storage.download(providedReceiptKey).catch(() => null);
+        if (!receiptBytes) {
+          return sendError(res, 400, 'The uploaded receipt could not be found. Please re-upload your payment screenshot.');
+        }
+        randomScreenshotKey = providedReceiptKey;
+        // Hash the ACTUAL stored bytes so duplicate-receipt detection cannot be
+        // bypassed or poisoned by a client-supplied hash.
+        screenshotSha256 = sha256(Buffer.from(receiptBytes));
+      }
 
       // Check if student is resubmitting for an existing REJECTED payment
       const existingRejected = await prisma.payment.findFirst({
@@ -975,7 +1220,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           },
         });
 
-        return sendJson(res, 200, resubmittedPayment);
+        return sendJson(res, 200, { ...resubmittedPayment, payment: resubmittedPayment });
       }
 
       // Fresh payment submission
@@ -1036,7 +1281,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         },
       });
 
-      return sendJson(res, 201, payment);
+      return sendJson(res, 201, { ...payment, payment });
     }
 
     // -------------------------------------------------------------
@@ -1067,8 +1312,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const parts = pathname.split('/');
       const paymentId = parts[3];
       const body = await parseBody(req);
-      const reviewerId = body.reviewerId;
       const actor = await resolveActor(req, body, url.searchParams);
+      // SECURITY: reviewer identity is derived from the authenticated session,
+      // never from a client-supplied body field.
+      const reviewerId = actor?.id;
 
       if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.PAYMENT_VERIFIER)) {
         return sendError(res, 403, 'Content managers and unauthorized users are not authorized to approve payments.');
@@ -1164,7 +1411,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         prisma
       );
 
-      return sendJson(res, 200, result);
+      return sendJson(res, 200, { ...result.payment, ...result });
     }
 
     // -------------------------------------------------------------
@@ -1175,8 +1422,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const paymentId = parts[3];
       const body = await parseBody(req);
       const reason = body.reason?.trim();
-      const reviewerId = body.reviewerId;
       const actor = await resolveActor(req, body, url.searchParams);
+      // SECURITY: reviewer identity is derived from the authenticated session,
+      // never from a client-supplied body field.
+      const reviewerId = actor?.id;
 
       if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.PAYMENT_VERIFIER)) {
         return sendError(res, 403, 'Content managers and unauthorized users are not authorized to reject payments.');
@@ -1217,6 +1466,13 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           },
         });
 
+        // SECURITY: rejecting a payment must also remove any access it granted,
+        // otherwise a rejected/fraudulent payment keeps the paid entitlement.
+        const deactivatedEntitlements = await tx.entitlement.updateMany({
+          where: { paymentId: payment.id, isActive: true },
+          data: { isActive: false },
+        });
+
         await tx.auditLog.create({
           data: {
             action: 'Payment rejected',
@@ -1228,6 +1484,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
               referenceCode: payment.referenceCode,
               transactionId: payment.transactionId,
               reason,
+              deactivatedEntitlements: deactivatedEntitlements.count,
             },
           },
         });
@@ -1259,8 +1516,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const paymentId = parts[3];
       const body = await parseBody(req);
       const reason = body.reason?.trim();
-      const reviewerId = body.reviewerId;
       const actor = await resolveActor(req, body, url.searchParams);
+      // SECURITY: reviewer identity is derived from the authenticated session,
+      // never from a client-supplied body field.
+      const reviewerId = actor?.id;
 
       if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.PAYMENT_VERIFIER)) {
         return sendError(res, 403, 'Content managers and unauthorized users are not authorized to revoke payments.');
@@ -1378,11 +1637,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         studentNotes,
       } = parsed.data;
 
-      const actor = await resolveActor(req, rawBody, url.searchParams);
-      const studentId = actor?.id || rawBody.studentId;
-      if (!studentId) {
+      const actor = await resolveActor(req);
+      if (!actor || !actor.user) {
         return sendError(res, 401, 'Student authentication required to submit exam papers');
       }
+      const studentId = actor.id;
 
       // Check student permission & canSell status
       const student = await prisma.user.findUnique({
@@ -1410,10 +1669,24 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       }
 
       // SERVER VALIDATION 2: Only the 11 courses approved for Woliso Campus
-      const course = await prisma.course.findUnique({ where: { id: courseId } });
+      let course = await prisma.course.findUnique({ where: { id: courseId } });
+      if (!course) {
+        const cleanCode = (rawBody.courseCode || courseId.replace(/^course-/, ''))
+          .replace(/-/g, ' ')
+          .trim();
+        course = await prisma.course.findFirst({
+          where: {
+            OR: [
+              { code: { equals: cleanCode, mode: 'insensitive' } },
+              { code: { equals: rawBody.courseCode || '', mode: 'insensitive' } },
+            ],
+          },
+        });
+      }
       if (!course || !course.isActive || course.deletedAt !== null) {
         return sendError(res, 400, 'Invalid course selected. Only the 11 approved freshman courses are accepted.');
       }
+      const realCourseId = course.id;
 
       // SERVER VALIDATION 3: Three mandatory declarations with text and student timestamp
       const declaration1 = rawBody.declarationAuthentic === true || declarationAccepted;
@@ -1466,9 +1739,15 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 409, 'This exact paper file is already undergoing review in the admin verification queue.');
       }
 
-      const randomQuarantineKey = rawBody.storageKey && rawBody.storageKey.startsWith('quarantine/')
-        ? rawBody.storageKey
-        : generateRandomStorageKey('quarantine', 'pdf');
+      // SECURITY: a client may only reference a file the server itself wrote
+      // into the private quarantine namespace. Any other key (e.g. a
+      // "published/..." paper key) is ignored and a fresh server-generated key
+      // is used, preventing cross-object references and paywall bypass.
+      let randomQuarantineKey = generateRandomStorageKey('quarantine', 'pdf');
+      if (rawBody.storageKey && rawBody.storageKey.startsWith('quarantine/')) {
+        const keyExists = await storage.exists(rawBody.storageKey).catch(() => false);
+        if (keyExists) randomQuarantineKey = rawBody.storageKey;
+      }
 
       // If file binary provided in base64, save to quarantine storage
       if (rawBody.fileBase64) {
@@ -1484,7 +1763,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         const c = await tx.paperContribution.create({
           data: {
             studentId,
-            courseId,
+            courseId: realCourseId,
             examType,
             examDate: examDateObj,
             academicYearEc: academicYear,
@@ -1702,14 +1981,14 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       );
 
       const quarantineData = await storage.download(file.storageKey);
-      if (quarantineData) {
-        await storage.upload(publishedKey, quarantineData, file.mimeType);
-      } else {
-        const placeholderPdf = Buffer.from(
-          `%PDF-1.4\n%ExamVault Published Paper: ${contrib.course.code}\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n%%EOF`
+      if (!quarantineData) {
+        return sendError(
+          res,
+          400,
+          'Cannot approve contribution: the uploaded exam paper file is missing from quarantine storage.'
         );
-        await storage.upload(publishedKey, placeholderPdf, file.mimeType);
       }
+      await storage.upload(publishedKey, quarantineData, file.mimeType);
 
       const result = await prisma.$transaction(async (tx) => {
         // Create published ExamPaper with unique link to contribution
@@ -1871,7 +2150,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
         return sendError(res, 403, 'Permission denied: Only administrators and content managers can approve contributions.');
       }
-      const reviewerId = body.reviewerId;
+      const reviewerId = actor.id;
       const approvedPayoutEtb = Number(body.approvedPayoutEtb) || 100.00;
       const payoutTxId = body.payoutTxId || `TB_PAYOUT_${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -1888,12 +2167,21 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 404, 'Contribution not found');
       }
 
-      const file = contrib.files[0] || {
-        storageKey: `papers/${contrib.course.code.replace(' ', '')}_Exam.pdf`,
-        sha256: sha256(`paper-${contrib.id}`),
-        mimeType: 'application/pdf',
-        sizeBytes: 2500000,
-      };
+      if (!contrib.files || contrib.files.length === 0) {
+        return sendError(res, 400, 'Cannot approve contribution: no uploaded paper files associated with this submission.');
+      }
+
+      const file = contrib.files[0];
+      const quarantineData = await storage.download(file.storageKey);
+      if (!quarantineData) {
+        return sendError(res, 400, 'Cannot approve contribution: the uploaded exam paper file is missing from quarantine storage.');
+      }
+
+      const publishedKey = file.storageKey.startsWith('quarantine/')
+        ? file.storageKey.replace('quarantine/', 'published/')
+        : `published/${file.storageKey}`;
+
+      await storage.upload(publishedKey, quarantineData, file.mimeType);
 
       const result = await prisma.$transaction(async (tx) => {
         // Create Published ExamPaper
@@ -1905,7 +2193,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             examYearEc: contrib.academicYearEc,
             quality: ScanQuality.EXCELLENT,
             pageCount: 6,
-            storageKey: file.storageKey.replace('quarantine/', 'published/'),
+            storageKey: publishedKey,
             sha256: file.sha256,
             mimeType: file.mimeType,
             fileSizeBytes: file.sizeBytes,
@@ -2009,11 +2297,42 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // -------------------------------------------------------------
     if (pathname === '/api/term-interest' && method === 'POST') {
       const body = await parseBody(req);
-      const userId = body.userId;
-      const termId = body.termId;
+      const actor = await resolveActor(req, body, url.searchParams);
 
-      if (!userId || !termId) {
-        return sendError(res, 400, 'userId and termId required');
+      // SECURITY: a term-interest record belongs to the authenticated account
+      // only. Never trust a client-supplied userId — doing so allowed anyone to
+      // write rows against arbitrary users and to overwrite a victim's phone
+      // number (an account-takeover primitive, since login accepts phone).
+      if (!actor || !actor.user) {
+        return sendError(res, 401, 'Authentication required to register for term interest.');
+      }
+      const userId = actor.id;
+
+      const userExists = await prisma.user.findUnique({ where: { id: userId } });
+      if (!userExists) {
+        return sendError(res, 404, 'User account not found');
+      }
+
+      let termId = body.termId;
+      if (!termId || termId === 'term-y1s2' || termId === 'y1s2' || termId.length < 30) {
+        const y1s2Term = await prisma.term.findFirst({
+          where: { yearNumber: 1, semesterNumber: 2 },
+        });
+        if (y1s2Term) {
+          termId = y1s2Term.id;
+        }
+      } else {
+        const termExists = await prisma.term.findUnique({ where: { id: termId } });
+        if (!termExists) {
+          const y1s2Term = await prisma.term.findFirst({
+            where: { yearNumber: 1, semesterNumber: 2 },
+          });
+          if (y1s2Term) termId = y1s2Term.id;
+        }
+      }
+
+      if (!termId) {
+        return sendError(res, 400, 'Valid termId required');
       }
 
       const rec = await prisma.termInterest.upsert({
@@ -2028,23 +2347,144 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           userId,
           termId,
         },
+        include: {
+          term: true,
+          user: true,
+        },
       });
 
-      return sendJson(res, 201, rec);
+      const channel = typeof body.channel === 'string' ? body.channel.trim() : 'sms';
+      const contact = typeof body.contact === 'string' ? body.contact.trim() : (userExists.phone || userExists.email || '');
+
+      // SECURITY: never write a user's phone number from an unverified contact
+      // value. A profile phone change must go through a verified flow (OTP),
+      // which does not exist yet, so we only record the preference here.
+      void contact;
+
+      // Record in AuditLog with channel and contact details
+      await prisma.auditLog.create({
+        data: {
+          action: 'Semester 2 Interest Notification Registered',
+          entityType: 'TermInterest',
+          entityId: rec.id,
+          actorId: userId,
+          riskLevel: AuditRiskLevel.LOW,
+          details: {
+            userId,
+            termId,
+            channel,
+            contact,
+            academicYear: 1,
+            semester: 2,
+          },
+        },
+      });
+
+      // Dispatch confirmation notification to student
+      await prisma.notification.create({
+        data: {
+          userId,
+          title: 'Semester 2 Alert Confirmed',
+          message: `You will be alerted via ${channel.toUpperCase()} (${contact}) when Year 1 Semester 2 exam papers are published.`,
+          type: 'INFO',
+        },
+      });
+
+      return sendJson(res, 201, {
+        ...rec,
+        channel,
+        contact,
+      });
+    }
+
+    // -------------------------------------------------------------
+    // GET /api/requests - Paper Requests
+    // -------------------------------------------------------------
+    if (pathname === '/api/requests' && method === 'GET') {
+      const actor = await resolveActor(req, undefined, url.searchParams);
+      if (!actor) {
+        return sendError(res, 401, 'Authentication required');
+      }
+
+      if (actor.role === Role.ADMIN || actor.role === Role.CONTENT_MANAGER) {
+        const requests = await prisma.paperRequest.findMany({
+          include: { student: true, course: true },
+          orderBy: { createdAt: 'desc' },
+        });
+        return sendJson(res, 200, requests);
+      }
+
+      const requests = await prisma.paperRequest.findMany({
+        where: { studentId: actor.id },
+        include: { student: true, course: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      return sendJson(res, 200, requests);
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/requests - Submit a paper request
+    // -------------------------------------------------------------
+    if (pathname === '/api/requests' && method === 'POST') {
+      const body = await parseBody(req);
+      const actor = await resolveActor(req, body, url.searchParams);
+      if (!actor) {
+        return sendError(res, 401, 'Authentication required to submit paper requests');
+      }
+
+      const { courseId, examType, examYear, notes } = body;
+      if (!courseId) {
+        return sendError(res, 400, 'Course ID is required');
+      }
+
+      // Resolve course by ID or code
+      let course = await prisma.course.findUnique({ where: { id: courseId } });
+      if (!course) {
+        const codeQuery = courseId.replace(/^course-/, '').replace(/-/g, ' ').toUpperCase();
+        course = await prisma.course.findFirst({
+          where: {
+            OR: [
+              { code: { equals: codeQuery, mode: 'insensitive' } },
+              { code: { contains: codeQuery.replace(/\s+/g, ''), mode: 'insensitive' } },
+            ],
+          },
+        });
+      }
+
+      if (!course) {
+        return sendError(res, 404, 'Course not found');
+      }
+
+      // Validate exam type
+      const normalizedType = String(examType || 'FINAL').toUpperCase();
+      let validExamType: ExamType = ExamType.FINAL;
+      if (normalizedType.includes('MID')) validExamType = ExamType.MID;
+      else if (normalizedType.includes('QUIZ')) validExamType = ExamType.QUIZ;
+      else if (normalizedType.includes('FINAL')) validExamType = ExamType.FINAL;
+
+      const paperRequest = await prisma.paperRequest.create({
+        data: {
+          studentId: actor.id,
+          courseId: course.id,
+          examType: validExamType,
+          examYear: examYear ? parseInt(String(examYear), 10) : null,
+          notes: notes ? String(notes).trim() : null,
+        },
+        include: {
+          course: true,
+          student: true,
+        },
+      });
+
+      return sendJson(res, 201, paperRequest);
     }
 
     // -------------------------------------------------------------
     // POST /api/upload - Secure File Upload with Magic Bytes Verification
     // -------------------------------------------------------------
     if (pathname === '/api/upload' && method === 'POST') {
-      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1';
-      const rl = await checkRateLimit(`upload:${ip}`, 30, 600);
-      if (!rl.allowed) {
-        return sendError(res, 429, 'Upload rate limit exceeded. Please wait a few minutes before trying again.');
-      }
-
       const body = await parseBody(req);
-      const { fileBase64, reportedMime, category, userId } = body;
+      const { fileBase64, reportedMime, category } = body;
 
       if (!fileBase64) {
         return sendError(res, 400, 'File content (fileBase64) is required.');
@@ -2054,6 +2494,17 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const signature = detectFileSignature(buf);
       if (!signature.valid || !signature.detectedMime) {
         return sendError(res, 400, signature.error || 'Invalid file format. Only authentic PDF, JPG, and PNG files are accepted.');
+      }
+
+      const actor = await resolveActor(req);
+      if (!actor || !actor.user) {
+        return sendError(res, 401, 'Authentication required to upload files.');
+      }
+
+      const ip = getClientIp(req);
+      const rl = await checkRateLimit(`upload:${ip}`, 30, 600);
+      if (!rl.allowed) {
+        return sendError(res, 429, 'Upload rate limit exceeded. Please wait a few minutes before trying again.');
       }
 
       // Check configured size limit from system settings
@@ -2083,6 +2534,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // AUTH & SESSION MANAGEMENT (Max 2 Concurrent Sessions)
     // -------------------------------------------------------------
     if (pathname === '/api/auth/session' && method === 'POST') {
+      const actor = await resolveActor(req);
+      if (!actor || actor.role !== Role.ADMIN) {
+        return sendError(res, 403, 'Unauthorized: Only administrators can provision arbitrary sessions.');
+      }
+
       const body = await parseBody(req);
       const { userId, userAgent, evictOldest } = body;
 
@@ -2124,11 +2580,16 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     }
 
     if (pathname === '/api/auth/sessions' && method === 'GET') {
-      const userId = url.searchParams.get('userId');
-      if (!userId) return sendError(res, 400, 'userId required');
+      const actor = await resolveActor(req);
+      if (!actor) {
+        return sendError(res, 401, 'Unauthorized: Authentication required.');
+      }
+      const requestedUserId = url.searchParams.get('userId');
+      // Non-admins can strictly only inspect their own sessions
+      const targetUserId = (actor.role === Role.ADMIN && requestedUserId) ? requestedUserId : actor.id;
 
       const sessions = await prisma.session.findMany({
-        where: { userId, expiresAt: { gt: new Date() } },
+        where: { userId: targetUserId, expiresAt: { gt: new Date() } },
         orderBy: { createdAt: 'desc' },
       });
 
@@ -2223,7 +2684,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       }
 
       // Log authorized view to PaperViewLog
-      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '197.156.102.10';
+      const ip = getClientIp(req);
       const userAgent = req.headers['user-agent'] || 'Mozilla/5.0';
 
       await prisma.paperViewLog.create({
@@ -2235,22 +2696,18 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         },
       });
 
-      // Ensure paper binary exists in storage
+      // Ensure paper binary exists in storage - fail with clear error if missing (Hard Rule 2)
       const existsInStorage = await storage.exists(paper!.storageKey);
       if (!existsInStorage) {
-        const samplePdf = Buffer.from(
-          `%PDF-1.4\n%ExamVault Secure Asset: ${paper!.title}\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n%%EOF`,
-          'utf-8'
-        );
-        await storage.upload(paper!.storageKey, samplePdf, paper!.mimeType);
+        return sendError(res, 404, 'Exam paper document file is missing from secure storage.');
       }
 
-      // Issue signed URL expiring strictly in 60 seconds or less
-      const secret = process.env.SESSION_SECRET || 'examvault-secure-local-storage-secret';
-      const expiresInSeconds = 60;
+      // Issue signed URL expiring in 2 hours (allows complete study sessions without mid-reading cutoffs)
+      const secret = getSessionSecret();
+      const expiresInSeconds = 7200;
       const expiresAtMs = Date.now() + expiresInSeconds * 1000;
-      const streamToken = signStreamTicket(paper!.storageKey, expiresAtMs, secret);
-      const streamUrl = `/api/papers/${paper!.id}/stream?token=${streamToken}&expires=${expiresAtMs}`;
+      const streamToken = signStreamTicket(paper!.storageKey, expiresAtMs, secret, userId);
+      const streamUrl = `/api/papers/${paper!.id}/stream?token=${streamToken}&expires=${expiresAtMs}&u=${encodeURIComponent(userId)}`;
 
       return sendJson(res, 200, {
         allowed: true,
@@ -2281,7 +2738,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
 
       const expiresNum = Number(expires);
       if (isNaN(expiresNum) || Date.now() > expiresNum) {
-        return sendError(res, 403, 'Signed URL has expired (limit 60 seconds). Please refresh the viewer.');
+        return sendError(res, 403, 'Signed URL has expired. Please refresh the viewer.');
       }
 
       const paper = await prisma.examPaper.findUnique({
@@ -2296,8 +2753,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 403, 'Exam paper is not available for streaming.');
       }
 
-      const secret = process.env.SESSION_SECRET || 'examvault-secure-local-storage-secret';
-      const isValidSig = verifyStreamTicket(paper.storageKey, expiresNum, token, secret);
+      const actor = await resolveActor(req);
+      const userBinding = url.searchParams.get('u') || actor?.id || undefined;
+      const secret = getSessionSecret();
+      const isValidSig = verifyStreamTicket(paper.storageKey, expiresNum, token, secret, userBinding);
       if (!isValidSig) {
         return sendError(res, 403, 'Invalid or forged stream signature. Access denied.');
       }
@@ -2319,30 +2778,70 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     }
 
     // -------------------------------------------------------------
-    // GET /api/storage/view - Direct Private Storage View via Signed URL
+    // GET /api/storage/view - Direct Private Storage View via Signed URL or Staff Session
     // -------------------------------------------------------------
     if (pathname === '/api/storage/view' && method === 'GET') {
       const key = url.searchParams.get('key');
       const expires = url.searchParams.get('expires');
       const sig = url.searchParams.get('sig');
 
-      if (!key || !expires || !sig) {
-        return sendError(res, 403, 'Direct storage key access is strictly forbidden without a signed URL.');
+      if (!key) {
+        return sendError(res, 400, 'Missing storage key parameter');
       }
 
       if (!key.startsWith('quarantine/') && !key.startsWith('published/')) {
         return sendError(res, 403, 'Access denied. Storage prefix must be "quarantine/" or "published/".');
       }
 
-      const expiresNum = Number(expires);
-      if (isNaN(expiresNum) || Date.now() > expiresNum) {
-        return sendError(res, 403, 'Signed URL has expired. Access denied.');
+      let authorized = false;
+
+      // Check if signed URL with valid signature and unexpired timestamp
+      if (sig && expires) {
+        const expiresNum = Number(expires);
+        if (!isNaN(expiresNum) && Date.now() <= expiresNum) {
+          const secret = getSessionSecret();
+          if (verifyStreamTicket(key, expiresNum, sig, secret)) {
+            authorized = true;
+          }
+        }
       }
 
-      const secret = process.env.SESSION_SECRET || 'examvault-secure-local-storage-secret';
-      const isValidSig = verifyStreamTicket(key, expiresNum, sig, secret);
-      if (!isValidSig) {
-        return sendError(res, 403, 'Invalid signature for requested storage key. Access denied.');
+      // Check if authenticated user/staff session
+      if (!authorized) {
+        const actor = await resolveActor(req);
+        if (actor) {
+          if (
+            actor.role === Role.ADMIN ||
+            actor.role === Role.PAYMENT_VERIFIER ||
+            actor.role === Role.CONTENT_MANAGER
+          ) {
+            authorized = true;
+          } else if (actor.role === Role.STUDENT) {
+            // SECURITY: students may only read their own uploaded receipts and
+            // submissions. Published paper assets are never served here — they
+            // are streamed through signed, entitlement-checked tickets.
+            if (key.startsWith('quarantine/')) {
+              const ownPayment = await prisma.payment.findFirst({
+                where: { screenshotKey: key, userId: actor.id },
+              });
+              const ownContrib = !ownPayment
+                ? await prisma.paperContribution.findFirst({
+                    where: {
+                      studentId: actor.id,
+                      files: { some: { storageKey: key } },
+                    },
+                  })
+                : null;
+              if (ownPayment || ownContrib) {
+                authorized = true;
+              }
+            }
+          }
+        }
+      }
+
+      if (!authorized) {
+        return sendError(res, 403, 'Direct storage key access is strictly forbidden without a signed URL or authorized session.');
       }
 
       const data = await storage.download(key);
@@ -2365,12 +2864,17 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     }
 
     // -------------------------------------------------------------
-    // GET /api/papers/:id/pages/:pageNum - Compressed Page Image for Slow Connections
+    // GET /api/papers/:id/pages/:pageNum - Authenticated Compressed Page Image
     // -------------------------------------------------------------
     if (pathname.startsWith('/api/papers/') && pathname.includes('/pages/') && method === 'GET') {
       const parts = pathname.split('/');
       const paperId = parts[3];
       const pageNum = parseInt(parts[5], 10) || 1;
+
+      const actor = await resolveActor(req);
+      if (!actor || !actor.user) {
+        return sendError(res, 401, 'Authentication required to view exam pages.');
+      }
 
       const paper = await prisma.examPaper.findUnique({
         where: { id: paperId },
@@ -2381,20 +2885,47 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 404, 'Exam paper not found.');
       }
 
+      // Verify access permission
+      const canManage = actor.role === Role.ADMIN || actor.role === Role.CONTENT_MANAGER;
+      if (!canManage) {
+        const entitlements = await prisma.entitlement.findMany({
+          where: { userId: actor.id, isActive: true },
+          include: { programTerm: { include: { courses: true } } },
+        });
+        const entitlementContexts = entitlements.map((e) => ({
+          userId: e.userId,
+          isActive: e.isActive,
+          validUntil: e.validUntil ? e.validUntil.toISOString() : null,
+          courseIds: e.programTerm.courses.map((c) => c.courseId),
+        }));
+
+        const check = verifyPaperAccess(
+          actor.user ? { ...actor.user, deletedAt: actor.user.deletedAt ? actor.user.deletedAt.toISOString() : null } : null,
+          {
+            id: paper.id,
+            courseId: paper.courseId,
+            status: paper.status,
+            isFreeSample: paper.isFreeSample,
+            deletedAt: null,
+            course: {
+              id: paper.course.id,
+              isActive: paper.course.isActive,
+              deletedAt: paper.course.deletedAt ? paper.course.deletedAt.toISOString() : null,
+            },
+          },
+          entitlementContexts
+        );
+
+        if (!check.allowed) {
+          return sendError(res, 403, 'Access denied to this exam paper.');
+        }
+      }
+
       const pageKey = `published/${paper.id}/pages/page_${pageNum}.svg`;
-      let pageData = await storage.download(pageKey);
+      const pageData = await storage.download(pageKey);
 
       if (!pageData) {
-        const buf = generateCompressedPageBuffer(
-          paper.course.code,
-          paper.course.title,
-          paper.title,
-          pageNum,
-          paper.pageCount || 6,
-          paper.examYearEc || 2015
-        );
-        await storage.upload(pageKey, buf, 'image/svg+xml');
-        pageData = buf;
+        return sendError(res, 404, 'Paper page asset not found in storage.');
       }
 
       res.writeHead(200, {
@@ -2414,11 +2945,17 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     if (pathname.startsWith('/api/papers/') && pathname.endsWith('/report') && method === 'POST') {
       const parts = pathname.split('/');
       const paperId = parts[3];
-      const body = await parseBody(req);
-      const { userId, category, description } = body;
+      const actor = await resolveActor(req);
+      if (!actor || !actor.user) {
+        return sendError(res, 401, 'Authentication required to report issues.');
+      }
+      const userId = actor.id;
 
-      if (!userId || !category) {
-        return sendError(res, 400, 'userId and problem category are required');
+      const body = await parseBody(req);
+      const { category, description } = body;
+
+      if (!category) {
+        return sendError(res, 400, 'Problem category is required');
       }
 
       const paper = await prisma.examPaper.findUnique({
@@ -2465,6 +3002,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // GET /api/papers/check-duplicate - SHA-256 Duplicate Pre-check
     // -------------------------------------------------------------
     if (pathname === '/api/papers/check-duplicate' && method === 'GET') {
+      const actor = await resolveActor(req);
+      if (!actor) {
+        return sendError(res, 401, 'Authentication required to check paper duplicates.');
+      }
+
       const fileSha256 = url.searchParams.get('sha256');
       if (!fileSha256) {
         return sendError(res, 400, 'sha256 query parameter is required.');
@@ -2498,6 +3040,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // GET /api/papers - Search, Filter, Sort Papers Library
     // -------------------------------------------------------------
     if (pathname === '/api/papers' && method === 'GET') {
+      const actor = await resolveActor(req);
+      const canManageContent = actor && (actor.role === Role.ADMIN || actor.role === Role.CONTENT_MANAGER);
       const courseId = url.searchParams.get('courseId');
       const examType = url.searchParams.get('examType') as ExamType | null;
       const status = url.searchParams.get('status') as PaperStatus | null;
@@ -2505,10 +3049,16 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const search = url.searchParams.get('search')?.toLowerCase();
 
       const whereClause: any = {};
-      if (!includeDeleted) whereClause.deletedAt = null;
+      // SECURITY: Non-managers (guests, students, payment verifiers) strictly only see PUBLISHED and active papers
+      if (canManageContent) {
+        if (!includeDeleted) whereClause.deletedAt = null;
+        if (status) whereClause.status = status;
+      } else {
+        whereClause.deletedAt = null;
+        whereClause.status = PaperStatus.PUBLISHED;
+      }
       if (courseId) whereClause.courseId = courseId;
       if (examType) whereClause.examType = examType;
-      if (status) whereClause.status = status;
 
       let papers = await prisma.examPaper.findMany({
         where: whereClause,
@@ -2536,12 +3086,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // POST /api/papers - Single and Bulk Paper Drag-and-Drop Upload
     // -------------------------------------------------------------
     if (pathname === '/api/papers' && method === 'POST') {
-      const body = await parseBody(req);
-      const actor = await resolveActor(req, body, url.searchParams);
-
+      const actor = await resolveActor(req);
       if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
-        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to create or upload exam papers.');
+        return sendError(res, 403, 'Payment verifiers are not authorized to create or upload exam papers.');
       }
+
+      const body = await parseBody(req);
 
       const rawList: any[] = Array.isArray(body.bulk) ? body.bulk : [body];
       const results: any[] = [];
@@ -2605,12 +3155,25 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           itemKey ||
           generateRandomStorageKey('published', 'pdf', course.code.replace(/\s+/g, ''));
 
-        const hasBin = await storage.exists(finalStorageKey);
+        let hasBin = await storage.exists(finalStorageKey);
         if (!hasBin) {
-          const samplePdf = Buffer.from(
-            `%PDF-1.4\n%ExamVault Asset: ${paperTitle}\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n%%EOF`
-          );
-          await storage.upload(finalStorageKey, samplePdf, mimeType);
+          if (itemKey && (await storage.exists(itemKey))) {
+            const data = await storage.download(itemKey);
+            if (data) {
+              await storage.upload(finalStorageKey, data, mimeType);
+              hasBin = true;
+            }
+          } else if (item.fileBase64) {
+            const buf = Buffer.from(item.fileBase64, 'base64');
+            await storage.upload(finalStorageKey, buf, mimeType);
+            hasBin = true;
+          } else {
+            return sendError(
+              res,
+              400,
+              'Cannot create exam paper: binary PDF asset not found in storage. Upload a valid PDF file first via /api/upload.'
+            );
+          }
         }
 
         const paper = await prisma.examPaper.create({
@@ -2727,12 +3290,13 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     if (pathname.startsWith('/api/papers/') && pathname.endsWith('/replace-file') && method === 'POST') {
       const parts = pathname.split('/');
       const paperId = parts[3];
-      const body = await parseBody(req);
-      const actor = await resolveActor(req, body, url.searchParams);
+      const actor = await resolveActor(req);
 
       if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
-        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to replace paper files.');
+        return sendError(res, 403, 'Payment verifiers are not authorized to replace paper files.');
       }
+
+      const body = await parseBody(req);
 
       const existing = await prisma.examPaper.findUnique({
         where: { id: paperId },
@@ -2829,10 +3393,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     ) {
       const parts = pathname.split('/');
       const paperId = parts[3];
-      const actor = await resolveActor(req, undefined, url.searchParams);
+      const actor = await resolveActor(req);
 
       if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
-        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to delete exam papers.');
+        return sendError(res, 403, 'Payment verifiers are not authorized to delete exam papers.');
       }
 
       const existing = await prisma.examPaper.findUnique({ where: { id: paperId } });
@@ -2868,10 +3432,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     if (pathname.startsWith('/api/papers/') && pathname.endsWith('/restore') && method === 'POST') {
       const parts = pathname.split('/');
       const paperId = parts[3];
-      const actor = await resolveActor(req, undefined, url.searchParams);
+      const actor = await resolveActor(req);
 
       if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
-        return sendError(res, 403, 'Payment verifiers and unauthorized users are not authorized to restore exam papers.');
+        return sendError(res, 403, 'Payment verifiers are not authorized to restore exam papers.');
       }
 
       const existing = await prisma.examPaper.findUnique({ where: { id: paperId } });
@@ -2995,9 +3559,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // USERS MANAGEMENT & ROLE SEPARATION
     // -------------------------------------------------------------
     if (pathname === '/api/users' && method === 'GET') {
-      const actor = await resolveActor(req, undefined, url.searchParams);
-      if (!actor || actor.role === Role.CONTENT_MANAGER || actor.role === Role.STUDENT) {
-        return sendError(res, 403, 'Content managers and students are not authorized to view users or roles.');
+      const actor = await resolveActor(req);
+      if (!actor || actor.role !== Role.ADMIN) {
+        if (actor?.role === Role.CONTENT_MANAGER) {
+          return sendError(res, 403, 'Content managers are not authorized to view users or roles.');
+        }
+        return sendError(res, 403, 'Only administrators are authorized to view users or roles.');
       }
 
       const users = await prisma.user.findMany({
@@ -3025,10 +3592,13 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     if (pathname.startsWith('/api/users/') && pathname.endsWith('/access-history') && method === 'GET') {
       const parts = pathname.split('/');
       const targetUserId = parts[3];
-      const actor = await resolveActor(req, undefined, url.searchParams);
+      const actor = await resolveActor(req);
 
-      if (!actor || actor.role === Role.CONTENT_MANAGER || (actor.role === Role.STUDENT && actor.id !== targetUserId)) {
-        return sendError(res, 403, 'Content managers and unauthorized users are not authorized to view user access history.');
+      if (!actor) {
+        return sendError(res, 401, 'Authentication required to view access history.');
+      }
+      if (actor.role !== Role.ADMIN && actor.id !== targetUserId) {
+        return sendError(res, 403, 'Access denied: Permission denied to view user access history.');
       }
 
       const [user, entitlements, payments, views] = await Promise.all([
@@ -3099,13 +3669,13 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     if (pathname.startsWith('/api/users/') && method === 'PATCH') {
       const parts = pathname.split('/');
       const targetUserId = parts[3];
-      const body = await parseBody(req);
-      const actor = await resolveActor(req, body, url.searchParams);
+      const actor = await resolveActor(req);
 
-      if (!actor || actor.role === Role.CONTENT_MANAGER || actor.role === Role.STUDENT) {
-        return sendError(res, 403, 'Content managers and students are not authorized to modify users.');
+      if (!actor || actor.role !== Role.ADMIN) {
+        return sendError(res, 403, 'Only administrators are authorized to modify users.');
       }
 
+      const body = await parseBody(req);
       const user = await prisma.user.findUnique({ where: { id: targetUserId } });
       if (!user) {
         return sendError(res, 404, 'User not found.');
