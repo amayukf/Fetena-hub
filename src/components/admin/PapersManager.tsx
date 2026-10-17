@@ -118,8 +118,13 @@ export default function PapersManager({
 
     try {
       for (const file of uploadFiles) {
-        const hash = await computeSha256(file);
         const dataUrl = await fileToDataUrl(file);
+        const parts = dataUrl.split(',');
+        const base64Data = parts[1] || parts[0];
+        const mimeType = file.type || 'application/pdf';
+
+        // ONE upload contract: browser -> authenticated POST /api/upload -> private storage -> returns storageKey + sha256
+        const uploadRes = await api.uploadFile(base64Data, mimeType, 'paper');
 
         const title =
           uploadFiles.length === 1 && uploadCustomTitle.trim()
@@ -136,11 +141,11 @@ export default function PapersManager({
             status: uploadStatus,
             isFreeSample: uploadIsFreeSample,
             pageCount: 6,
-            file: dataUrl,
+            storageKey: uploadRes.storageKey,
+            sha256: uploadRes.sha256,
+            mimeType: uploadRes.mimeType,
+            fileBytes: uploadRes.sizeBytes,
             fileName: file.name,
-            fileBytes: file.size,
-            mimeType: file.type || 'application/pdf',
-            sha256: hash,
             force,
           },
           currentUser.userId,
@@ -175,17 +180,22 @@ export default function PapersManager({
 
     setReplacing(true);
     try {
-      const hash = await computeSha256(replaceFile);
       const dataUrl = await fileToDataUrl(replaceFile);
+      const parts = dataUrl.split(',');
+      const base64Data = parts[1] || parts[0];
+      const mimeType = replaceFile.type || 'application/pdf';
+
+      // ONE upload contract: upload file first to /api/upload
+      const uploadRes = await api.uploadFile(base64Data, mimeType, 'paper');
 
       await api.replacePaperFile(
         replacingPaper.id,
         {
-          file: dataUrl,
+          storageKey: uploadRes.storageKey,
+          sha256: uploadRes.sha256,
+          mimeType: uploadRes.mimeType,
+          fileBytes: uploadRes.sizeBytes,
           fileName: replaceFile.name,
-          fileBytes: replaceFile.size,
-          mimeType: replaceFile.type || 'application/pdf',
-          sha256: hash,
         },
         currentUser.userId,
         currentUser.role

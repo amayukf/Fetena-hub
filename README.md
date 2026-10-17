@@ -29,14 +29,25 @@ npx prisma generate
 npx prisma migrate deploy
 
 # 5. Seed reference data (Campus WOLISO, Streams, Terms, 11 Courses, Settings)
+#    This command is SAFE to run multiple times — it uses upserts and never
+#    deletes any existing data.
 npm run seed
 
 # 6. Create the initial administrator account
 npm run create-admin admin@ambo.edu.et CampusAdminPassword2026!
 
-# 7. Start the development server
+# 7. (Optional) Seed local dev test accounts (non-production only)
+npm run seed:dev
+
+# 8. Start the development server
 npm run dev
 ```
+
+> ⚠️ **NEVER run `npm run seed:reset` against real data.**
+> `seed:reset` runs a full `TRUNCATE CASCADE` that **permanently deletes every
+> student account, payment, and exam paper** in the database. It is blocked in
+> `NODE_ENV=production` and requires interactive confirmation. It exists only
+> for local development database resets.
 
 App is available at: **http://localhost:8443** (or port specified in `$PORT`).
 
@@ -90,11 +101,12 @@ Switching to Neon is a **one-line change**:
    DATABASE_URL="postgres://username:password@ep-xxxxxxxx.us-east-2.aws.neon.tech/examvault?sslmode=require"
    DIRECT_URL="postgres://username:password@ep-xxxxxxxx.us-east-2.aws.neon.tech/examvault?sslmode=require"
    ```
-3. Run migrations and seed:
+3. Run migrations then the **safe** idempotent seed:
    ```bash
    npx prisma migrate deploy
    npm run seed
    ```
+   > Do **not** run `npm run seed:reset` against a Neon database that has real data.
 
 ### Switching to Cloudflare R2 / AWS S3
 Provide your R2 bucket credentials in environment variables:

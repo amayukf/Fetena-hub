@@ -11,6 +11,7 @@
     "test": "vitest run --fileParallelism=false",
     "test:integration": "vitest run tests/integration-database.test.ts",
     "seed": "tsx prisma/seed.ts",
+    "seed:reset": "tsx prisma/seed-reset.ts",
     "seed:dev": "tsx prisma/seedDev.ts",
     "create-admin": "tsx scripts/createAdmin.ts"
   },

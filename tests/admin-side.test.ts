@@ -333,8 +333,15 @@ describe('STEP 10: Complete Admin Side Backend & Role Separation', () => {
       expect(dupRes.body.details.isDuplicate).toBe(true);
       expect(dupRes.body.details.existingPaper.title).toBe(testPaper.title);
 
-      // Pre-check endpoint
-      const precheck = await callApi('GET', `/api/papers/check-duplicate?sha256=${testPaper.sha256}`);
+      // Pre-check endpoint rejects unauthenticated requests
+      const unauthPrecheck = await callApi('GET', `/api/papers/check-duplicate?sha256=${testPaper.sha256}`);
+      expect(unauthPrecheck.status).toBe(401);
+
+      // Authenticated admin pre-check endpoint succeeds
+      const precheck = await callApi('GET', `/api/papers/check-duplicate?sha256=${testPaper.sha256}`, undefined, {
+        'x-actor-id': adminUser.id,
+        'x-actor-role': 'ADMIN',
+      });
       expect(precheck.status).toBe(200);
       expect(precheck.body.isDuplicate).toBe(true);
       expect(precheck.body.paper.title).toBe(testPaper.title);
@@ -353,6 +360,7 @@ describe('STEP 10: Complete Admin Side Backend & Role Separation', () => {
           status: 'DRAFT',
           isFreeSample: false,
           sha256: uniquePaperSha,
+          fileBase64: Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF').toString('base64'),
         },
         {
           'x-actor-id': contentManagerUser.id,
@@ -429,6 +437,7 @@ describe('STEP 10: Complete Admin Side Backend & Role Separation', () => {
               examYearEc: 2016,
               status: 'PUBLISHED',
               sha256: sha256('bulk-quiz-1-content'),
+              fileBase64: Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF').toString('base64'),
             },
             {
               courseId: testCourse.id,
@@ -437,6 +446,7 @@ describe('STEP 10: Complete Admin Side Backend & Role Separation', () => {
               examYearEc: 2016,
               status: 'PUBLISHED',
               sha256: sha256('bulk-quiz-2-content'),
+              fileBase64: Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF').toString('base64'),
             },
           ],
         },

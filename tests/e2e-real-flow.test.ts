@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Role, PaymentStatus, PaperStatus, ExamType, ProgramType, PaymentMethod } from '@prisma/client';
 import { handleApiRequest, prisma } from '../server/apiHandler';
+import { storage } from '../src/lib/storage';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 
@@ -47,6 +48,12 @@ function callApi(method: string, path: string, body?: any, headers: Record<strin
 }
 
 describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
+  const runId = Math.floor(100000 + Math.random() * 900000);
+  const testStudentEmail = `tadesse.alemu.${runId}@ambo.edu.et`;
+  const testStudentPhone = `091${String(runId).slice(0, 7)}`;
+  const testStudentId = `AMU-2026-${runId}`;
+  const verifierEmail = `e2e_verifier_${runId}@woliso.edu.et`;
+
   let verifierUser: any;
   let natProg: any;
   let socProg: any;
@@ -83,9 +90,9 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
     });
 
     const termY1S1 = await prisma.term.upsert({
-      where: { code: 'Y1S1' },
+      where: { yearNumber_semesterNumber: { yearNumber: 1, semesterNumber: 1 } },
       update: {},
-      create: { code: 'Y1S1', academicYear: 2016, semesterNumber: 1, name: 'Year 1 Semester 1' },
+      create: { yearNumber: 1, semesterNumber: 1, name: 'Year 1 Semester 1' },
     });
 
     natY1S1 = await prisma.programTerm.findFirst({
@@ -110,17 +117,17 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
     coursePhys = await prisma.course.upsert({
       where: { code: 'Phys 1011' },
       update: {},
-      create: { code: 'Phys 1011', title: 'General Physics', streamCode: 'NAT_SCI', isActive: true },
+      create: { code: 'Phys 1011', title: 'General Physics', creditHours: 3 },
     });
     coursePhil = await prisma.course.upsert({
       where: { code: 'Phil 1011' },
       update: {},
-      create: { code: 'Phil 1011', title: 'Logic and Critical Thinking', streamCode: null, isActive: true },
+      create: { code: 'Phil 1011', title: 'Logic and Critical Thinking', creditHours: 3 },
     });
     courseEcon = await prisma.course.upsert({
       where: { code: 'Econ 1011' },
       update: {},
-      create: { code: 'Econ 1011', title: 'Introduction to Economics', streamCode: 'SOC_SCI', isActive: true },
+      create: { code: 'Econ 1011', title: 'Introduction to Economics', creditHours: 3 },
     });
 
     // Ensure links to ProgramTerms
@@ -134,6 +141,14 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
       skipDuplicates: true,
     });
 
+    // Seed test files into private storage
+    const physKey = `published/e2e_phys1011_${runId}.pdf`;
+    const philKey = `published/e2e_phil1011_${runId}.pdf`;
+    const econKey = `published/e2e_econ1011_${runId}.pdf`;
+    await storage.upload(physKey, Buffer.from('REAL-TEST-PDF-PHYS-BYTES'), 'application/pdf');
+    await storage.upload(philKey, Buffer.from('REAL-TEST-PDF-PHIL-BYTES'), 'application/pdf');
+    await storage.upload(econKey, Buffer.from('REAL-TEST-PDF-ECON-BYTES'), 'application/pdf');
+
     // Papers
     paperPhys = await prisma.examPaper.create({
       data: {
@@ -141,8 +156,8 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
         title: 'Phys 1011 · Final Exam 2015 E.C.',
         examType: ExamType.FINAL,
         examYearEc: 2015,
-        storageKey: 'published/e2e_phys1011.pdf',
-        sha256: sha256('e2e-phys-paper'),
+        storageKey: physKey,
+        sha256: sha256(`e2e-phys-paper-${runId}`),
         status: PaperStatus.PUBLISHED,
         isFreeSample: false,
       },
@@ -154,8 +169,8 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
         title: 'Phil 1011 · Final Exam 2015 E.C.',
         examType: ExamType.FINAL,
         examYearEc: 2015,
-        storageKey: 'published/e2e_phil1011.pdf',
-        sha256: sha256('e2e-phil-paper'),
+        storageKey: philKey,
+        sha256: sha256(`e2e-phil-paper-${runId}`),
         status: PaperStatus.PUBLISHED,
         isFreeSample: false,
       },
@@ -167,8 +182,8 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
         title: 'Econ 1011 · Final Exam 2015 E.C.',
         examType: ExamType.FINAL,
         examYearEc: 2015,
-        storageKey: 'published/e2e_econ1011.pdf',
-        sha256: sha256('e2e-econ-paper'),
+        storageKey: econKey,
+        sha256: sha256(`e2e-econ-paper-${runId}`),
         status: PaperStatus.PUBLISHED,
         isFreeSample: false,
       },
@@ -178,7 +193,7 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
     verifierUser = await prisma.user.create({
       data: {
         fullName: 'E2E Verifier',
-        email: 'e2e_verifier@woliso.edu.et',
+        email: verifierEmail,
         role: Role.PAYMENT_VERIFIER,
         passwordHash: 'dummy',
         isActive: true,
@@ -193,9 +208,9 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
   it('Step 1: Sign up as a real student in Natural Science stream', async () => {
     const signupRes = await callApi('POST', '/api/auth/signup', {
       fullName: 'Tadesse Alemu',
-      email: 'tadesse.alemu@ambo.edu.et',
-      phone: '0912349999',
-      studentId: 'AMU-2026-9999',
+      email: testStudentEmail,
+      phone: testStudentPhone,
+      studentId: testStudentId,
       stream: 'NAT_SCI',
       password: 'StrongPassword123!',
     });
@@ -212,9 +227,9 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
       userId: studentUser.userId,
       programTermId: natY1S1.id,
       paymentMethod: 'TELEBIRR',
-      transactionId: 'TB_E2E_REAL_TX_001',
-      receiptImageStorageKey: 'quarantine/receipt_e2e.jpg',
-      receiptImageSha256: sha256('e2e-receipt-image-content'),
+      transactionId: `TB_E2E_REAL_TX_${runId}`,
+      receiptImageStorageKey: `quarantine/receipt_e2e_${runId}.jpg`,
+      receiptImageSha256: sha256(`e2e-receipt-image-content-${runId}`),
     }, {
       authorization: `Bearer ${studentSessionToken}`,
     });

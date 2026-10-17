@@ -4,7 +4,7 @@ import { handleApiRequest, prisma, checkRateLimit } from '../server/apiHandler';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { signStreamTicket, detectFileSignature, validateStorageKey } from '../src/lib/storage';
+import { signStreamTicket, detectFileSignature, validateStorageKey, storage } from '../src/lib/storage';
 
 function sha256(data: string | Buffer): string {
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -68,9 +68,11 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
   beforeAll(async () => {
     // Clean tables for isolated run
     await prisma.$executeRawUnsafe(`
-      TRUNCATE TABLE "paper_view_logs", "notifications", "audit_logs", "paper_contributions", "contribution_files",
-      "payments", "entitlements", "sessions", "rate_limits", "exam_papers", "program_term_courses",
-      "program_terms", "courses", "terms", "programs", "campuses", "users", "system_settings" CASCADE;
+      TRUNCATE TABLE 
+        "WantedPaper", "PaperViewLog", "AuditLog", "Notification", "Entitlement", 
+        "Payment", "ExamPaper", "ProgramTermCourse", "Course", 
+        "ProgramTerm", "Term", "User", "Program", "Campus", "SystemSetting", "RateLimit", "Session" 
+      CASCADE;
     `);
 
     // Reference campus & programs
@@ -86,7 +88,7 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
     });
 
     const termY1S1 = await prisma.term.create({
-      data: { code: 'Y1S1', academicYear: 2016, semesterNumber: 1, name: 'Year 1 Semester 1' },
+      data: { yearNumber: 1, semesterNumber: 1, name: 'Year 1 Semester 1' },
     });
 
     natProgramTerm = await prisma.programTerm.create({
@@ -98,13 +100,13 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
 
     // Courses
     coursePhysNat = await prisma.course.create({
-      data: { code: 'Phys 1011', title: 'General Physics', streamCode: 'NAT_SCI', isActive: true },
+      data: { code: 'Phys 1011', title: 'General Physics', creditHours: 3 },
     });
     coursePhilShared = await prisma.course.create({
-      data: { code: 'Phil 1011', title: 'Introduction to Logic and Critical Thinking', streamCode: null, isActive: true },
+      data: { code: 'Phil 1011', title: 'Introduction to Logic and Critical Thinking', creditHours: 3 },
     });
     courseEconSoc = await prisma.course.create({
-      data: { code: 'Econ 1011', title: 'Introduction to Economics', streamCode: 'SOC_SCI', isActive: true },
+      data: { code: 'Econ 1011', title: 'Introduction to Economics', creditHours: 3 },
     });
 
     await prisma.programTermCourse.createMany({
@@ -162,6 +164,11 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
     });
+
+    // Upload files to storage for testing
+    await storage.upload('published/phys1011_final_2015.pdf', Buffer.from('REAL-TEST-PDF-PHYS-FINAL'), 'application/pdf');
+    await storage.upload('published/phys1011_draft_2016.pdf', Buffer.from('REAL-TEST-PDF-PHYS-DRAFT'), 'application/pdf');
+    await storage.upload('published/phys1011_hidden_2016.pdf', Buffer.from('REAL-TEST-PDF-PHYS-HIDDEN'), 'application/pdf');
 
     // Papers
     paperPhysPublished = await prisma.examPaper.create({

@@ -136,24 +136,60 @@ export default function AdminDashboard({
             {recentActivity.length === 0 ? (
               <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No recent activity records.</p>
             ) : (
-              recentActivity.slice(0, 5).map((a: any) => (
-                <div className="activity-item" key={a.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                  <span className="stat-icon" style={{ width: '32px', height: '32px', flexShrink: 0 }}>
-                    <Icon name="activity" size={16} />
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                      <strong style={{ fontSize: '0.85rem', color: 'var(--ink)' }}>{a.action}</strong>
-                      <time style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-                        {new Date(a.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </time>
+              recentActivity.slice(0, 5).map((a: any) => {
+                const who = a.actor?.fullName || a.actorName || 'System Automated';
+                const role = a.actor?.role || a.actorRole || 'SYSTEM';
+                const what = a.action || 'System Activity';
+
+                let detailsObj: any = {};
+                if (typeof a.details === 'object' && a.details !== null) {
+                  detailsObj = a.details;
+                } else if (typeof a.details === 'string') {
+                  try { detailsObj = JSON.parse(a.details); } catch { detailsObj = {}; }
+                }
+
+                let itemLabel = '';
+                if (detailsObj.referenceCode) {
+                  itemLabel = `Payment #${detailsObj.referenceCode}`;
+                } else if (detailsObj.courseCode || detailsObj.title) {
+                  itemLabel = [detailsObj.courseCode, detailsObj.title].filter(Boolean).join(' · ');
+                } else if (detailsObj.studentId || detailsObj.fullName) {
+                  itemLabel = [detailsObj.fullName, detailsObj.studentId].filter(Boolean).join(' · ');
+                } else if (detailsObj.code) {
+                  itemLabel = `Course: ${detailsObj.code}`;
+                } else if (detailsObj.key) {
+                  itemLabel = `Setting: ${detailsObj.key}`;
+                } else if (a.entityType) {
+                  itemLabel = `${a.entityType}${a.entityId ? ` #${a.entityId.slice(0, 8)}` : ''}`;
+                } else {
+                  itemLabel = 'System Record';
+                }
+
+                return (
+                  <div className="activity-item" key={a.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                    <span className="stat-icon" style={{ width: '32px', height: '32px', flexShrink: 0 }}>
+                      <Icon name="activity" size={16} />
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' }}>
+                        <strong style={{ fontSize: '0.85rem', color: 'var(--ink)' }}>{what}</strong>
+                        <time style={{ fontSize: '0.75rem', color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                          {new Date(a.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </time>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
+                        <small style={{ color: 'var(--ink-2)', fontWeight: 600 }}>{who}</small>
+                        <Badge tone={role === 'ADMIN' || role === 'SUPER_ADMIN' ? 'accent' : 'neutral'}>
+                          {role}
+                        </Badge>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--ink-2)', background: 'var(--canvas)', border: '1px solid var(--line)', padding: '1px 8px', borderRadius: '4px' }}>
+                          {itemLabel}
+                        </span>
+                      </div>
                     </div>
-                    <small style={{ color: 'var(--muted)', display: 'block' }}>
-                      {a.actorName} · <Badge tone={a.riskLevel === 'HIGH' || a.riskLevel === 'CRITICAL' ? 'danger' : 'neutral'}>{a.actorRole}</Badge>
-                    </small>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </Card>

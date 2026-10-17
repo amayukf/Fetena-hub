@@ -135,7 +135,7 @@ const adminNav: Array<[Screen, IconName, string]> = [
   ["papers", "file", "Exam papers"], ["contributions", "upload", "Contributions"],
   ["paper-requests", "bell", "Paper requests"], ["admin-payments", "card", "Payments"],
   ["users", "users", "Users & roles"], ["audit", "activity", "Audit log"],
-  ["settings", "settings", "Platform settings"], ["components", "book", "Components"],
+  ["settings", "settings", "Platform settings"],
   ["tokens", "chart", "Design tokens"],
 ];
 
@@ -230,7 +230,7 @@ function Shell({
   onLogout?: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const isAdminScreen = ["admin","structure","papers","contributions","paper-requests","admin-payments","users","audit","settings","components","tokens"].includes(screen);
+  const isAdminScreen = ["admin","structure","papers","contributions","paper-requests","admin-payments","users","audit","settings","tokens"].includes(screen);
   
   const isStaff = currentUser.role !== "STUDENT";
   const isContentManager = currentUser.role === "CONTENT_MANAGER";
@@ -321,14 +321,30 @@ function Shell({
 // MARKETING & AUTH SCREENS
 // -------------------------------------------------------------
 
-function Landing({ go }: { go: (s: Screen) => void }) {
+function Landing({
+  go,
+  courses = FRESHMAN_11_COURSES,
+  papers = [],
+}: {
+  go: (s: Screen) => void;
+  courses?: FreshmanCourseItem[];
+  papers?: StoreExamPaper[];
+}) {
+  const [previewStream, setPreviewStream] = useState<StreamCode>("NAT_SCI");
+
+  const streamCourses = courses.filter(
+    c => c.streamScope === "SHARED" || c.streamScope === previewStream
+  );
+
+  const publishedPapersCount = papers.filter(p => p.status === "PUBLISHED" || !p.status).length;
+  const coursesCount = courses.length;
+
   return <div className="landing">
     <nav className="marketing-nav">
       <Logo/>
       <div className="marketing-links">
         <button onClick={() => go("browse")}>Browse</button>
         <button onClick={() => go("help")}>How it works</button>
-        <button onClick={() => go("admin-login")}>Admin</button>
       </div>
       <div className="nav-cta">
         <Button variant="ghost" onClick={() => go("login")}>Log in</Button>
@@ -339,7 +355,7 @@ function Landing({ go }: { go: (s: Screen) => void }) {
       <div className="hero-copy">
         <Badge tone="accent">BUILT FOR AMBO UNIVERSITY STUDENTS</Badge>
         <Heading level={1}>Prepare smarter with past exam papers.</Heading>
-        <p>Find previous exams for your department, year, and semester—all organized in one calm, reliable place.</p>
+        <p>Find previous exams for your stream and semester—all organized in one calm, reliable place.</p>
         <div className="hero-actions">
           <Button onClick={() => go("browse")} icon="arrow">Browse exam papers</Button>
           <Button variant="secondary" onClick={() => go("viewer")} icon="eye">View a free sample</Button>
@@ -351,22 +367,46 @@ function Landing({ go }: { go: (s: Screen) => void }) {
         </div>
       </div>
       <div className="hero-visual">
-        <div className="floating-note note-top">
-          <span className="status-dot"/>
-          <div><strong>New papers added</strong><small>Database Systems · 2023</small></div>
-        </div>
         <Card className="preview-card">
-          <div className="preview-head"><Logo compact/><span>Past papers</span><Badge tone="success">Unlocked</Badge></div>
+          <div className="preview-head">
+            <Logo compact/>
+            <span>Freshman Year 1</span>
+            <Badge tone="success">Semester 1</Badge>
+          </div>
           <div className="preview-body">
-            <small>INFORMATION TECHNOLOGY · YEAR 3</small>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "4px" }}>
+              <button
+                type="button"
+                className={`btn btn-${previewStream === "NAT_SCI" ? "primary" : "secondary"}`}
+                style={{ minHeight: "30px", padding: "0 12px", fontSize: "0.75rem", borderRadius: "999px" }}
+                onClick={() => setPreviewStream("NAT_SCI")}
+              >
+                Natural Science
+              </button>
+              <button
+                type="button"
+                className={`btn btn-${previewStream === "SOC_SCI" ? "primary" : "secondary"}`}
+                style={{ minHeight: "30px", padding: "0 12px", fontSize: "0.75rem", borderRadius: "999px" }}
+                onClick={() => setPreviewStream("SOC_SCI")}
+              >
+                Social Science
+              </button>
+            </div>
+            <small>{previewStream === "NAT_SCI" ? "NATURAL SCIENCE STREAM" : "SOCIAL SCIENCE STREAM"} · YEAR 1</small>
             <Heading level={3}>Semester 1 courses</Heading>
-            {["Database Systems", "Computer Networks", "Web Programming II"].map((c, i) => (
-              <div className="preview-row" key={c}>
-                <span className="course-icon"><Icon name="book"/></span>
-                <div><strong>{c}</strong><small>{6 - i} exam papers</small></div>
-                <Icon name="chevron"/>
-              </div>
-            ))}
+            {streamCourses.slice(0, 4).map((c) => {
+              const paperCount = papers.filter(p => p.courseId === c.id || p.courseCode === c.code).length;
+              return (
+                <div className="preview-row" key={c.id}>
+                  <span className="course-icon"><Icon name="book"/></span>
+                  <div>
+                    <strong>{c.code} · {c.title}</strong>
+                    <small>{paperCount > 0 ? `${paperCount} exam paper${paperCount > 1 ? "s" : ""}` : (c.isShared ? "Common shared course" : "Core curriculum course")}</small>
+                  </div>
+                  <Icon name="chevron"/>
+                </div>
+              );
+            })}
           </div>
         </Card>
         <div className="floating-note note-bottom">
@@ -378,9 +418,9 @@ function Landing({ go }: { go: (s: Screen) => void }) {
     <section className="social-proof">
       <p>Helping students study with confidence across Woliso Campus</p>
       <div>
-        <strong>19</strong><span>Departments</span>
-        <strong>840+</strong><span>Exam papers</span>
-        <strong>2,400+</strong><span>Students supported</span>
+        <strong>2</strong><span>Academic Streams</span>
+        {coursesCount > 0 && <><strong>{coursesCount}</strong><span>Courses covered</span></>}
+        {publishedPapersCount > 0 && <><strong>{publishedPapersCount}</strong><span>Exam papers</span></>}
       </div>
     </section>
     <section className="section">
@@ -391,7 +431,7 @@ function Landing({ go }: { go: (s: Screen) => void }) {
       </div>
       <div className="steps">
         {[
-          ["01", "Choose your semester", "Select your department, year, and semester to see every available course."],
+          ["01", "Choose your semester", "Select your stream and semester to see every available course."],
           ["02", "Unlock for 50 ETB", "Upload payment screenshot and reference ID. Verifier approves access for the whole semester."],
           ["03", "Study with confidence", "Open quality-checked papers securely on any phone, protected with your student watermark."],
         ].map(([n,t,d]) => <Card key={n} className="step-card"><span>{n}</span><Heading level={3}>{t}</Heading><p>{d}</p></Card>)}
@@ -402,7 +442,7 @@ function Landing({ go }: { go: (s: Screen) => void }) {
         <div>
           <Badge tone="success">SIMPLE PRICING</Badge>
           <Heading level={2}>Everything in your semester.<br/>One fair price.</Heading>
-          <p>Unlock all current and newly added exam papers for one department, academic year, and semester.</p>
+          <p>Unlock all current and newly added exam papers for your stream and semester.</p>
           <ul>
             <li><Icon name="check"/>All courses included</li>
             <li><Icon name="check"/>Mid exams, finals, and quizzes</li>
@@ -538,12 +578,12 @@ function Auth({
           role: res.user.role as Role,
           programId: res.user.programId || null,
           studentId: res.user.studentId || null,
-          stream: (res.user.program?.code as StreamCode) || "NAT_SCI",
+          stream: (res.user.stream as StreamCode) || (res.user.program?.code as StreamCode) || "NAT_SCI",
           currentYear: res.user.currentYear || 1,
-          mustChangePassword: res.mustChangePassword,
+          mustChangePassword: Boolean(res.user?.mustChangePassword ?? res.mustChangePassword),
         };
 
-        onAuthSuccess(userSession, res.mustChangePassword);
+        onAuthSuccess(userSession, Boolean(res.user?.mustChangePassword ?? res.mustChangePassword));
 
         if (res.user.role !== "STUDENT") {
           go("admin");
@@ -680,16 +720,33 @@ function Dashboard({
   currentUser,
   isUnlocked,
   selectedStream,
+  courses: propCourses = [],
+  papers: propPapers = [],
   onOpenNotifyModal,
 }: {
   go: (s: Screen) => void;
   currentUser: UserSession;
   isUnlocked: boolean;
   selectedStream: StreamCode;
+  courses?: FreshmanCourseItem[];
+  papers?: StoreExamPaper[];
   onOpenNotifyModal: () => void;
 }) {
   const streamLabel = selectedStream === "NAT_SCI" ? "Natural Science" : "Social Science";
-  const courses = getCoursesForStream(selectedStream);
+  const courses = (propCourses.length > 0
+    ? propCourses.filter(c => c.streamScope === "SHARED" || c.streamScope === selectedStream)
+    : getCoursesForStream(selectedStream)
+  ).map(c => {
+    const matchingPapers = (propPapers || []).filter(
+      p => p.courseId === c.id || (p.courseCode && p.courseCode.trim().toLowerCase() === c.code.trim().toLowerCase())
+    );
+    const paperCount = matchingPapers.length > 0 ? matchingPapers.length : (c.paperCount || 0);
+    return {
+      ...c,
+      paperCount,
+      hasFreeSample: matchingPapers.some(p => Boolean(p.isFreeSample)) || Boolean(c.hasFreeSample),
+    };
+  });
 
   return <>
     <PageHead
@@ -704,8 +761,12 @@ function Dashboard({
         </Badge>
         <Heading level={2}>{streamLabel} · Year 1</Heading>
         <p>Semester 1 · 7 courses (3 shared across streams) · Verified past exam papers</p>
-        <Button onClick={() => go(isUnlocked ? "semester" : "checkout")} variant="secondary">
-          {isUnlocked ? "Open semester" : "Unlock semester (50 ETB)"} <Icon name="arrow"/>
+        <Button
+          onClick={() => go(isUnlocked ? "semester" : "checkout")}
+          variant="secondary"
+          className="welcome-banner-btn"
+        >
+          {isUnlocked ? "Open semester" : "Unlock for 50 ETB"} <Icon name="arrow"/>
         </Button>
       </div>
       <div className="progress-ring">
@@ -915,6 +976,8 @@ function Semester({
   payments = [],
   settings,
   currentUser,
+  courses: propCourses = [],
+  papers: propPapers = [],
   onSelectCourse,
 }: {
   go: (s: Screen) => void;
@@ -923,10 +986,26 @@ function Semester({
   payments?: StorePayment[];
   settings: SystemSettingsState;
   currentUser: UserSession;
+  courses?: FreshmanCourseItem[];
+  papers?: StoreExamPaper[];
   onSelectCourse: (c: FreshmanCourseItem) => void;
 }) {
   const streamLabel = selectedStream === "NAT_SCI" ? "Natural Science" : "Social Science";
-  const courses = getCoursesForStream(selectedStream);
+  const baseCourses = propCourses.length > 0
+    ? propCourses.filter(c => c.streamScope === "SHARED" || c.streamScope === selectedStream)
+    : getCoursesForStream(selectedStream);
+
+  const courses = baseCourses.map(c => {
+    const matchingPapers = (propPapers || []).filter(
+      p => p.courseId === c.id || (p.courseCode && p.courseCode.trim().toLowerCase() === c.code.trim().toLowerCase())
+    );
+    const paperCount = matchingPapers.length > 0 ? matchingPapers.length : (c.paperCount || 0);
+    return {
+      ...c,
+      paperCount,
+      hasFreeSample: matchingPapers.some(p => Boolean(p.isFreeSample)) || Boolean(c.hasFreeSample),
+    };
+  });
   const userStreamPayments = (payments || []).filter(
     p => p.userId === currentUser.userId && p.stream === selectedStream && p.academicYearNumber === 1 && p.semesterNumber === 1
   );
@@ -1074,7 +1153,9 @@ function Course({
   onSelectPaper: (p: StoreExamPaper) => void;
 }) {
   const coursePapers = papers.filter(
-    (p) => p.courseCode === course.code || p.courseId === course.id
+    (p) =>
+      p.courseId === course.id ||
+      (p.courseCode && p.courseCode.trim().toLowerCase() === course.code.trim().toLowerCase())
   );
 
   return <>
@@ -1161,6 +1242,7 @@ function Course({
 
 function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUser: UserSession; paper?: StoreExamPaper | null }) {
   const [page, setPage] = useState(1);
+  const [zoom, setZoom] = useState(100);
   const [accessState, setAccessState] = useState<{ allowed: boolean; reason?: string; watermark?: any; streamUrl?: string; expiresAt?: number } | null>(null);
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -1184,6 +1266,19 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
         setCheckingAccess(false);
       });
   }, [paper?.id, currentUser.userId]);
+
+  // Silently refresh stream token 5 minutes before expiry during extended reading
+  useEffect(() => {
+    if (!paper) return;
+    const interval = setInterval(() => {
+      if (accessState?.expiresAt && Date.now() > accessState.expiresAt - 300000) {
+        api.checkPaperAccess(paper.id, currentUser.userId).then((res) => {
+          if (res.allowed) setAccessState(res);
+        }).catch(() => {});
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [paper?.id, currentUser.userId, accessState?.expiresAt]);
 
   const totalPages = paper?.pageCount || 6;
   const studentName = accessState?.watermark?.studentName || currentUser.fullName || "ExamVault Student";
@@ -1279,14 +1374,14 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
         <div>
           <Button variant="ghost" onClick={() => go("course")}><Icon name="close"/></Button>
           <span>
-            <strong>{paper ? paper.title : "Communicative English · Final Exam 2015 E.C."}</strong>
+            <strong>{paper ? paper.title : "Exam Paper"}</strong>
             <small>{paper ? `${paper.courseCode} · ${paper.pageCount} pages` : "FLEn 1011 · 6 pages"} · Protected Tiled Watermark Viewer</small>
           </span>
         </div>
         <div className="viewer-tools">
-          <Button variant="ghost">−</Button>
-          <span>100%</span>
-          <Button variant="ghost">+</Button>
+          <Button variant="ghost" onClick={() => setZoom(z => Math.max(50, z - 15))}>−</Button>
+          <span>{zoom}%</span>
+          <Button variant="ghost" onClick={() => setZoom(z => Math.min(200, z + 15))}>+</Button>
           <Button variant="ghost" onClick={() => {
             if (!document.fullscreenElement) {
               document.documentElement.requestFullscreen?.();
@@ -1298,8 +1393,22 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
         </div>
       </div>
 
-      <div className="pdf-stage">
-        <div className="pdf-page" style={{ position: "relative", overflow: "hidden" }}>
+      <div className="pdf-stage" style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto" }}>
+        <div
+          className="pdf-page-container"
+          style={{
+            position: "relative",
+            width: `min(100%, ${Math.round(820 * (zoom / 100))}px)`,
+            minHeight: "920px",
+            height: "calc(100vh - 160px)",
+            background: "#ffffff",
+            boxShadow: "0 10px 50px rgba(0,0,0,.4)",
+            borderRadius: "4px",
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
           {/* Dynamic Watermark Tiled Across Each Page */}
           <div
             className="watermark-tiled"
@@ -1314,7 +1423,7 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
               gridTemplateRows: "repeat(5, 1fr)",
               gap: "24px",
               padding: "30px 15px",
-              opacity: 0.12,
+              opacity: 0.14,
               zIndex: 10,
               overflow: "hidden",
             }}
@@ -1344,44 +1453,27 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
             ))}
           </div>
 
-          <div className="exam-logo"><Logo compact/></div>
-          <p>AMBO UNIVERSITY — WOLISO CAMPUS</p>
-          <Heading level={2}>
-            {paper ? `${paper.courseName} (${paper.courseCode})` : "Communicative English Language Skills I (FLEn 1011)"}
-          </Heading>
-          <div className="exam-meta">
-            <span>Course: {paper ? paper.courseName : "Communicative English Language Skills I"}</span>
-            <span>Course Code: {paper ? paper.courseCode : "FLEn 1011"}</span>
-            <span>Exam: {paper ? paper.title : "Final Exam 2015 E.C."}</span>
-            <span>Academic Year: {paper?.examYearEc ? `${paper.examYearEc} E.C.` : "2015 E.C."}</span>
-          </div>
-          <hr style={{ margin: "16px 0", borderColor: "#dfe7e4" }}/>
-          <strong>Instructions: Answer all questions carefully. Time allowed: 2:00 hours. Total Marks: 50%. (Page {page} of {totalPages})</strong>
-
-          <ol style={{ paddingLeft: "20px" }}>
-            <li>
-              <strong>Reading Comprehension & Critical Analysis:</strong>
-              <p>Read the provided academic passage concerning sustainable agricultural development in the Horn of Africa. Identify the author's primary thesis and evaluate two counter-arguments presented in paragraph 3. <b>(15 marks)</b></p>
-            </li>
-            <li>
-              <strong>Discourse Cohesion & Contextual Synthesis:</strong>
-              <p>Analyze how cohesive markers (transitions, anaphora, lexical repetition) link the premise to the conclusion in the following excerpt from the Woliso Campus symposium: <b>(10 marks)</b></p>
-              <div className="code-block">
-                "Higher education fosters technological dissemination. Consequently, regional productivity accelerates..."
-              </div>
-            </li>
-            <li>
-              <strong>Academic Sentence Structure & Paraphrasing:</strong>
-              <p>Paraphrase the following complex academic excerpt without altering its propositional content or formal register: <b>(15 marks)</b></p>
-              <p style={{ fontStyle: "italic", marginTop: "8px" }}>
-                "The rapid evolution of scientific methodologies necessitates rigorous critical discernment among undergraduate students entering university programs."
-              </p>
-            </li>
-            <li>
-              <strong>Summary Writing & Thesis Formulation:</strong>
-              <p>Synthesize the text into a 120-word cohesive abstract highlighting problem statement, methodological orientation, and major findings. <b>(10 marks)</b></p>
-            </li>
-          </ol>
+          {/* Real PDF or Authenticated Page Stream */}
+          {accessState?.streamUrl ? (
+            <iframe
+              key={`${paper?.id}-${page}-${accessState.expiresAt}`}
+              src={`${accessState.streamUrl}#page=${page}&toolbar=0&navpanes=0`}
+              title={paper?.title || "Exam Paper Preview"}
+              style={{
+                width: "100%",
+                height: "100%",
+                flex: 1,
+                border: "none",
+                display: "block",
+                background: "#ffffff",
+              }}
+            />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, color: "var(--muted)", padding: "40px" }}>
+              <Icon name="clock" size={32} />
+              <p style={{ marginTop: "12px" }}>Loading examination document stream...</p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1963,11 +2055,13 @@ function Payments({ payments, settings, go }: { payments: StorePayment[]; settin
 function Requests({
   currentUser,
   contributions,
+  courses = [],
   onSubmitContribution,
   onSubmitRequest,
 }: {
   currentUser: UserSession;
   contributions: StoreContribution[];
+  courses?: FreshmanCourseItem[];
   onSubmitContribution: (c: {
     courseId: string;
     courseCode: string;
@@ -1982,13 +2076,19 @@ function Requests({
     notes: string;
     fileBase64?: string;
     fileName?: string;
-  }) => void;
+    mimeType?: string;
+  }) => Promise<void> | void;
   onSubmitRequest: (course: string, type: string, year: string, note: string) => void;
 }) {
   const [tab, setTab] = useState<"request" | "upload" | "status">("upload");
-  const [selectedCourseCode, setSelectedCourseCode] = useState(FRESHMAN_11_COURSES[0].code);
+  const courseList = courses && courses.length > 0 ? courses : FRESHMAN_11_COURSES;
+  const [selectedCourseCode, setSelectedCourseCode] = useState(courseList[0]?.code || FRESHMAN_11_COURSES[0].code);
   const [examType, setExamType] = useState<"FINAL" | "MID" | "QUIZ">("FINAL");
   const [examYear, setExamYear] = useState("2023");
+  const [reqCourseCode, setReqCourseCode] = useState(courseList[0]?.code || FRESHMAN_11_COURSES[0].code);
+  const [reqExamType, setReqExamType] = useState<"FINAL" | "MID" | "QUIZ">("FINAL");
+  const [reqExamYear, setReqExamYear] = useState("2023");
+  const [reqNotes, setReqNotes] = useState("");
   const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split("T")[0];
   const [examDate, setExamDate] = useState(yesterdayStr);
   const [declPastSemester, setDeclPastSemester] = useState(false);
@@ -2000,7 +2100,9 @@ function Requests({
   const [notes, setNotes] = useState("");
   const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
   const [attachedBase64, setAttachedBase64] = useState<string | null>(null);
+  const [attachedMimeType, setAttachedMimeType] = useState<string>("application/pdf");
   const [error, setError] = useState<string | null>(null);
+  const [submittingSell, setSubmittingSell] = useState(false);
   const [submittedMessage, setSubmittedMessage] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -2012,6 +2114,10 @@ function Requests({
         return;
       }
       setAttachedFileName(file.name);
+      const lowerName = file.name.toLowerCase();
+      const detectedMime = file.type || (lowerName.endsWith('.png') ? 'image/png' : (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) ? 'image/jpeg' : 'application/pdf');
+      setAttachedMimeType(detectedMime);
+
       const reader = new FileReader();
       reader.onload = () => {
         const res = reader.result as string;
@@ -2023,7 +2129,7 @@ function Requests({
     }
   };
 
-  const handleSellSubmit = (e: React.FormEvent) => {
+  const handleSellSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!declPastSemester || !declAuthorized || !declLegible) {
       setError("All three mandatory honor declarations must be accepted before submitting.");
@@ -2039,25 +2145,33 @@ function Requests({
       return;
     }
     setError(null);
-    const targetCourse = FRESHMAN_11_COURSES.find(c => c.code === selectedCourseCode) || FRESHMAN_11_COURSES[0];
+    setSubmittingSell(true);
+    const targetCourse = courseList.find(c => c.code === selectedCourseCode) || courseList[0];
 
-    onSubmitContribution({
-      courseId: targetCourse.id,
-      courseCode: targetCourse.code,
-      courseName: targetCourse.title,
-      examType,
-      year: parseInt(examYear) || 2023,
-      examDate,
-      declarationAccepted: true,
-      payoutAccount: payoutAccount.trim(),
-      payoutMethod,
-      proposedPayout: parseFloat(proposedPayout) || 50,
-      notes,
-      fileBase64: attachedBase64 || undefined,
-      fileName: attachedFileName || undefined,
-    });
-    setSubmittedMessage("Your paper has been submitted! Admin will inspect scan clarity and settle your payout.");
-    setTab("status");
+    try {
+      await onSubmitContribution({
+        courseId: targetCourse.id,
+        courseCode: targetCourse.code,
+        courseName: targetCourse.title,
+        examType,
+        year: parseInt(examYear) || 2023,
+        examDate,
+        declarationAccepted: true,
+        payoutAccount: payoutAccount.trim(),
+        payoutMethod,
+        proposedPayout: parseFloat(proposedPayout) || 50,
+        notes,
+        fileBase64: attachedBase64 || undefined,
+        fileName: attachedFileName || undefined,
+        mimeType: attachedMimeType || undefined,
+      });
+      setSubmittedMessage("Your paper has been submitted! Admin will inspect scan clarity and settle your payout.");
+      setTab("status");
+    } catch (err: any) {
+      setError(err.message || "Failed to submit paper contribution. Please verify file and network.");
+    } finally {
+      setSubmittingSell(false);
+    }
   };
 
   const mySubmissions = contributions.filter(c => c.studentId === currentUser.userId);
@@ -2093,16 +2207,40 @@ function Requests({
           <Heading level={2}>What exam paper are you looking for?</Heading>
           <p>Requests with more student demand are prioritized by content managers for acquisition.</p>
           <div className="form-grid">
-            <Select label="Course" value={selectedCourseCode} onChange={e => setSelectedCourseCode(e.target.value)}>
-              {FRESHMAN_11_COURSES.map(c => (
+            <Select label="Course" value={reqCourseCode} onChange={e => setReqCourseCode(e.target.value)}>
+              {courseList.map(c => (
                 <option key={c.code} value={c.code}>{c.code} — {c.title}</option>
               ))}
             </Select>
-            <Select label="Paper type"><option>Final exam</option><option>Mid exam</option><option>Quiz</option></Select>
+            <Select label="Paper type" value={reqExamType} onChange={e => setReqExamType(e.target.value as any)}>
+              <option value="FINAL">Final exam</option>
+              <option value="MID">Mid exam</option>
+              <option value="QUIZ">Quiz</option>
+            </Select>
           </div>
-          <Select label="Exam year"><option>2023</option><option>2022</option><option>2021</option></Select>
-          <label className="field"><span>Additional notes (optional)</span><textarea placeholder="e.g. Need the morning session exam..."/></label>
-          <Button onClick={() => { setSubmittedMessage("Paper request registered with Woliso Campus moderators."); }}>Send request</Button>
+          <Select label="Exam year" value={reqExamYear} onChange={e => setReqExamYear(e.target.value)}>
+            <option value="2024">2024 (2016 E.C.)</option>
+            <option value="2023">2023 (2015 E.C.)</option>
+            <option value="2022">2022 (2014 E.C.)</option>
+            <option value="2021">2021 (2013 E.C.)</option>
+          </Select>
+          <label className="field">
+            <span>Additional notes (optional)</span>
+            <textarea
+              placeholder="e.g. Need the morning session exam with complete answer sheet..."
+              value={reqNotes}
+              onChange={e => setReqNotes(e.target.value)}
+            />
+          </label>
+          <Button onClick={async () => {
+            try {
+              await onSubmitRequest(reqCourseCode, reqExamType, reqExamYear, reqNotes);
+              setSubmittedMessage("Paper request registered with Woliso Campus moderators.");
+              setReqNotes("");
+            } catch (err: any) {
+              setError(err.message || "Failed to submit request");
+            }
+          }}>Send request</Button>
         </>
       ) : tab === "upload" ? (
         <form onSubmit={handleSellSubmit}>
@@ -2127,7 +2265,7 @@ function Requests({
 
           <div className="form-grid">
             <Select label="Course (11 Freshman Courses)" value={selectedCourseCode} onChange={e => setSelectedCourseCode(e.target.value)}>
-              {FRESHMAN_11_COURSES.map(c => (
+              {courseList.map(c => (
                 <option key={c.code} value={c.code}>{c.code} — {c.title} {c.isShared ? "(Shared)" : ""}</option>
               ))}
             </Select>
@@ -2177,7 +2315,9 @@ function Requests({
             </label>
           </div>
 
-          <Button type="submit">Submit paper to Admin for cash payout</Button>
+          <Button type="submit" disabled={submittingSell}>
+            {submittingSell ? "Uploading & submitting paper..." : "Submit paper to Admin for cash payout"}
+          </Button>
         </form>
       ) : (
         <div>
@@ -2579,21 +2719,45 @@ function AdminTable({
               <tr>
                 <th>Activity</th>
                 <th>Performed by</th>
+                <th>Entity / Item</th>
                 <th>IP / Device</th>
                 <th>Date & Time</th>
                 <th>Risk</th>
-                <th>Details</th>
               </tr>
             </thead>
             <tbody>
               {auditLogs.map(a => (
                 <tr key={a.id}>
                   <td><strong>{a.action}</strong></td>
-                  <td>{a.performedBy}</td>
-                  <td>{a.deviceIp}</td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <strong>{a.performedBy}</strong>
+                      <Badge tone={a.role === "ADMIN" ? "accent" : "neutral"}>
+                        {a.role}
+                      </Badge>
+                    </div>
+                  </td>
+                  <td>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        background: "var(--canvas)",
+                        border: "1px solid var(--line)",
+                        padding: "3px 8px",
+                        borderRadius: "6px",
+                        fontSize: "0.78rem",
+                        fontWeight: 600,
+                        color: "var(--ink)",
+                      }}
+                    >
+                      {a.details}
+                    </span>
+                  </td>
+                  <td><code>{a.deviceIp}</code></td>
                   <td>{a.dateTime}</td>
                   <td><Badge tone={a.risk === "High" ? "danger" : a.risk === "Medium" ? "warning" : "success"}>{a.risk}</Badge></td>
-                  <td>{a.details}</td>
                 </tr>
               ))}
             </tbody>
@@ -2621,7 +2785,7 @@ function AdminTable({
             <tr>
               <th>Name / Title</th>
               <th>Details</th>
-              <th>Department</th>
+              <th>Academic Stream</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -2787,33 +2951,7 @@ function Structure({
   </>;
 }
 
-function ComponentsPage() {
-  return <>
-    <PageHead eyebrow="DESIGN SYSTEM" title="Components" text="Reusable interface patterns used throughout ExamVault."/>
-    <div className="component-stack">
-      <Card>
-        <Heading level={2}>Buttons</Heading>
-        <div className="component-row">
-          <Button>Primary action</Button>
-          <Button variant="secondary">Secondary</Button>
-          <Button variant="ghost">Ghost action</Button>
-          <Button variant="danger">Destructive</Button>
-          <Button icon="plus">With icon</Button>
-        </div>
-      </Card>
-      <Card>
-        <Heading level={2}>Badges & states</Heading>
-        <div className="component-row">
-          <Badge tone="success">Approved</Badge>
-          <Badge tone="warning">Pending</Badge>
-          <Badge tone="danger">Rejected</Badge>
-          <Badge tone="accent">New</Badge>
-          <Badge>Draft</Badge>
-        </div>
-      </Card>
-    </div>
-  </>;
-}
+
 
 function TokensPage() {
   return <>
@@ -2841,7 +2979,7 @@ function TokensPage() {
         <div className="type-samples">
           <span className="display">Prepare smarter.</span>
           <span className="title">Semester exam papers</span>
-          <span className="heading-sample">Database Systems</span>
+          <span className="heading-sample">General Physics</span>
           <span className="body-sample">Clear instructions and organized courses.</span>
         </div>
       </Card>
@@ -2854,8 +2992,17 @@ function TokensPage() {
 // -------------------------------------------------------------
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>("landing");
+  const [screen, setScreen] = useState<Screen>(() => {
+    try {
+      const saved = localStorage.getItem("ev_current_screen") as Screen | null;
+      if (saved && typeof saved === "string") return saved;
+    } catch {}
+    return "landing";
+  });
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
+  const currentUserRef = useRef<UserSession | null>(null);
+  // Keep ref in sync with state so async callbacks can read the latest value
+  currentUserRef.current = currentUser;
   const [authLoading, setAuthLoading] = useState(true);
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [selectedStream, setSelectedStream] = useState<StreamCode>("NAT_SCI");
@@ -2873,6 +3020,7 @@ export default function App() {
   const [prefilledWanted, setPrefilledWanted] = useState<{ courseId: string; courseCode: string; examType: ExamType } | null>(null);
   const [selectedPaper, setSelectedPaper] = useState<StoreExamPaper | null>(INITIAL_PAPERS[0] || null);
   const [termInterests, setTermInterests] = useState<TermInterestRecord[]>(INITIAL_TERM_INTERESTS);
+  const [terms, setTerms] = useState<any[]>([]);
   const [settings, setSettings] = useState<SystemSettingsState>(INITIAL_SYSTEM_SETTINGS);
 
   // Modal inspection states
@@ -2889,7 +3037,27 @@ export default function App() {
 
   const go = (s: Screen) => {
     setScreen(s);
+    try {
+      localStorage.setItem("ev_current_screen", s);
+    } catch {}
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleSelectCourse = (c: FreshmanCourseItem) => {
+    setSelectedCourse(c);
+    try {
+      localStorage.setItem("ev_selected_course_id", c.id);
+      localStorage.setItem("ev_selected_course_code", c.code);
+    } catch {}
+    go("course");
+  };
+
+  const handleSelectPaper = (p: StoreExamPaper) => {
+    setSelectedPaper(p);
+    try {
+      localStorage.setItem("ev_selected_paper_id", p.id);
+    } catch {}
+    go("viewer");
   };
 
   const currentTermKey = `pt-${selectedStream === "NAT_SCI" ? "nat-sci" : "soc-sci"}-y1s1`;
@@ -2900,42 +3068,13 @@ export default function App() {
       return true;
     }
 
-    // 2. Check if student has unlocked via Set key
+    // 2. Check if student has a specific unlock key in their own Set (strictly driven by active server entitlements)
     if (unlockedSemesters.has(currentTermKey)) {
       return true;
     }
 
-    // 3. Check if student has an APPROVED payment for this stream & semester
-    const myId = currentUser?.userId || (currentUser as any)?.id;
-    if (myId) {
-      const hasApprovedPayment = (payments || []).some(
-        p =>
-          (p.userId === myId || p.studentId === currentUser?.studentId) &&
-          (p.stream === selectedStream || !p.stream) &&
-          p.academicYearNumber === 1 &&
-          p.semesterNumber === 1 &&
-          p.status === "APPROVED"
-      );
-      if (hasApprovedPayment) return true;
-
-      // Also check any approved payment for this user regardless of stream mapping
-      const anyApproved = (payments || []).some(
-        p =>
-          (p.userId === myId || p.studentId === currentUser?.studentId) &&
-          p.status === "APPROVED"
-      );
-      if (anyApproved) return true;
-    }
-
-    // 4. Check if unlockedSemesters contains any programTermId or stream indicator
-    for (const termId of unlockedSemesters) {
-      if (termId === currentTermKey || termId.includes(selectedStream.toLowerCase())) {
-        return true;
-      }
-    }
-
     return false;
-  }, [currentUser, unlockedSemesters, currentTermKey, payments, selectedStream]);
+  }, [currentUser, unlockedSemesters, currentTermKey]);
 
   const pendingPaymentsCount = payments.filter(p => p.status === "PENDING").length;
 
@@ -2962,27 +3101,61 @@ export default function App() {
         setSettings(prev => ({ ...prev, ...sObj }));
       }
 
-      if (data.courses && data.courses.length > 0) {
-        const mappedCourses: FreshmanCourseItem[] = data.courses.map((c: any) => {
-          const ptCodes = c.programTerms?.map((pt: any) => pt.programTerm?.program?.code) || [];
-          const isShared = ptCodes.includes("NAT_SCI") && ptCodes.includes("SOC_SCI");
-          const streamScope: "NAT_SCI" | "SOC_SCI" | "SHARED" = isShared ? "SHARED" : ptCodes.includes("SOC_SCI") ? "SOC_SCI" : "NAT_SCI";
-          return {
-            id: c.id,
-            code: c.code,
-            title: c.title,
-            creditHours: c.creditHours,
-            streamScope,
-            isShared,
-            breakdown: isShared ? "Common Course (Shared)" : streamScope === "NAT_SCI" ? "Natural Science Core" : "Social Science Core",
-            paperCount: 2,
-            hasFreeSample: true,
-          };
-        });
-        setCourses(mappedCourses);
+      if (data.terms && data.terms.length > 0) {
+        setTerms(data.terms);
       }
 
-      if (data.papers && data.papers.length > 0) {
+      const rawPapers = data.papers || [];
+
+      // Always produce all 11 courses synchronized with real PostgreSQL course IDs and paper counts
+      const mappedCourses: FreshmanCourseItem[] = FRESHMAN_11_COURSES.map(fc => {
+        const dbCourse = (data.courses || []).find((c: any) =>
+          c.code.trim().toLowerCase() === fc.code.trim().toLowerCase()
+        );
+        const effectiveId = dbCourse ? dbCourse.id : fc.id;
+        const ptCodes = dbCourse?.programTerms?.map((pt: any) => pt.programTerm?.program?.code) || [];
+        const isShared = ptCodes.length > 0
+          ? (ptCodes.includes("NAT_SCI") && ptCodes.includes("SOC_SCI"))
+          : fc.isShared;
+        const streamScope = isShared
+          ? "SHARED"
+          : (ptCodes.includes("SOC_SCI") ? "SOC_SCI" : ptCodes.includes("NAT_SCI") ? "NAT_SCI" : fc.streamScope);
+
+        const coursePapers = rawPapers.filter(
+          (p: any) =>
+            p.courseId === effectiveId ||
+            p.courseId === fc.id ||
+            (p.course && p.course.code && p.course.code.trim().toLowerCase() === fc.code.trim().toLowerCase()) ||
+            (p.courseCode && p.courseCode.trim().toLowerCase() === fc.code.trim().toLowerCase())
+        );
+
+        return {
+          ...fc,
+          id: effectiveId,
+          title: dbCourse?.title || fc.title,
+          creditHours: dbCourse?.creditHours || fc.creditHours,
+          streamScope,
+          isShared,
+          breakdown: isShared ? "Common Course (Shared)" : streamScope === "NAT_SCI" ? "Natural Science Core" : "Social Science Core",
+          paperCount: coursePapers.length,
+          hasFreeSample: coursePapers.some((p: any) => Boolean(p.isFreeSample)),
+        };
+      });
+      setCourses(mappedCourses);
+
+      // Restore selectedCourse if saved in localStorage
+      try {
+        const savedCourseId = localStorage.getItem("ev_selected_course_id");
+        const savedCourseCode = localStorage.getItem("ev_selected_course_code");
+        if (savedCourseId || savedCourseCode) {
+          const found = mappedCourses.find(
+            c => c.id === savedCourseId || (savedCourseCode && c.code.trim().toLowerCase() === savedCourseCode.trim().toLowerCase())
+          );
+          if (found) setSelectedCourse(found);
+        }
+      } catch {}
+
+      if (data.papers) {
         const mappedPapers: StoreExamPaper[] = data.papers.map((p: any) => ({
           id: p.id,
           courseId: p.courseId,
@@ -2999,7 +3172,17 @@ export default function App() {
           addedAt: new Date(p.createdAt).toLocaleDateString(),
         }));
         setPapers(mappedPapers);
-        setSelectedPaper(mappedPapers[0] || null);
+        try {
+          const savedPaperId = localStorage.getItem("ev_selected_paper_id");
+          const found = mappedPapers.find(p => p.id === savedPaperId);
+          if (found) {
+            setSelectedPaper(found);
+          } else if (mappedPapers.length > 0) {
+            setSelectedPaper(prev => prev || mappedPapers[0]);
+          }
+        } catch {
+          if (mappedPapers.length > 0) setSelectedPaper(prev => prev || mappedPapers[0]);
+        }
       }
 
       if (data.payments) {
@@ -3017,7 +3200,12 @@ export default function App() {
           amountEtb: Number(p.amountEtb) || 50,
           paymentMethod: p.paymentMethod,
           transactionId: p.transactionId,
-          screenshotUrl: p.screenshotKey,
+          screenshotUrl: p.screenshotKey
+            ? (p.screenshotKey.startsWith('http') || p.screenshotKey.startsWith('data:') || p.screenshotKey.startsWith('/api/')
+                ? p.screenshotKey
+                : `/api/storage/view?key=${encodeURIComponent(p.screenshotKey)}`)
+            : undefined,
+          screenshotKey: p.screenshotKey,
           status: p.status,
           rejectionReason: p.rejectionReason,
           resubmitCount: p.resubmitCount || 0,
@@ -3045,6 +3233,7 @@ export default function App() {
           declarationAccepted: true,
           studentNotes: c.studentNotes || undefined,
           fileName: c.files?.[0]?.storageKey?.split("/").pop() || "Exam_Scan.pdf",
+          storageKey: c.files?.[0]?.storageKey,
           fileSizeBytes: c.files?.[0]?.sizeBytes || 2400000,
           payoutPaymentMethod: c.payoutPaymentMethod,
           payoutAccount: c.payoutAccount,
@@ -3062,7 +3251,20 @@ export default function App() {
 
       if (data.auditLogs) {
         const mappedAudit: StoreAuditLog[] = data.auditLogs.map((a: any) => {
-          const detailStr = typeof a.details === "object" && a.details ? JSON.stringify(a.details) : String(a.details || "");
+          let d: any = {};
+          if (typeof a.details === "object" && a.details) d = a.details;
+          else if (typeof a.details === "string") {
+            try { d = JSON.parse(a.details); } catch { d = {}; }
+          }
+          let item = "";
+          if (d.referenceCode) item = `Payment #${d.referenceCode}`;
+          else if (d.title || d.courseCode) item = [d.courseCode, d.title].filter(Boolean).join(" · ");
+          else if (d.studentId || d.fullName) item = [d.fullName, d.studentId].filter(Boolean).join(" · ");
+          else if (d.code) item = `Course: ${d.code}`;
+          else if (d.key) item = `Setting: ${d.key}`;
+          else if (a.entityType) item = `${a.entityType}${a.entityId ? ` #${a.entityId.slice(0, 8)}` : ""}`;
+          else item = "System record";
+
           return {
             id: a.id,
             action: a.action,
@@ -3071,7 +3273,7 @@ export default function App() {
             deviceIp: a.ipAddress || "197.156.102.10",
             dateTime: new Date(a.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             risk: a.riskLevel === "HIGH" || a.riskLevel === "CRITICAL" ? "High" : a.riskLevel === "MEDIUM" ? "Medium" : "Low",
-            details: detailStr,
+            details: item,
           };
         });
         setAuditLogs(mappedAudit);
@@ -3106,29 +3308,21 @@ export default function App() {
         setWantedPapers(mappedWanted);
       }
 
-      if (data.entitlements || data.payments) {
-        setUnlockedSemesters(prev => {
-          const unlocked = new Set<string>(prev);
-          if (data.entitlements) {
-            data.entitlements.forEach((e: any) => {
-              unlocked.add(e.programTermId);
-              const pCode = e.programTerm?.program?.code;
-              if (pCode === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
-              if (pCode === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
-            });
+      // Only update unlockedSemesters from the current user's own active entitlements
+      // (server entitlements are the single source of truth for access unlock)
+      const myUserId = currentUserRef.current?.userId || (currentUserRef.current as any)?.id || null;
+      if (data.entitlements) {
+        const unlocked = new Set<string>();
+        data.entitlements.forEach((e: any) => {
+          // Only add if this entitlement belongs to the current user and is active
+          if ((!myUserId || e.userId === myUserId) && e.isActive !== false) {
+            unlocked.add(e.programTermId);
+            const pCode = e.programTerm?.program?.code;
+            if (pCode === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
+            if (pCode === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
           }
-          if (data.payments) {
-            data.payments.forEach((p: any) => {
-              if (p.status === "APPROVED") {
-                unlocked.add(p.programTermId);
-                const pCode = p.programTerm?.program?.code || p.stream;
-                if (pCode === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
-                if (pCode === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
-              }
-            });
-          }
-          return unlocked;
         });
+        setUnlockedSemesters(unlocked);
       }
     } catch (err) {
       console.error("[Database Bootstrap Error]:", err);
@@ -3136,11 +3330,13 @@ export default function App() {
   };
 
   useEffect(() => {
+    let isMounted = true;
+
     const initSession = async () => {
       try {
         const meRes = await api.getMe();
         if (meRes.user) {
-          const stream = (meRes.user.program?.code as StreamCode) || "NAT_SCI";
+          const stream = (meRes.user.stream as StreamCode) || (meRes.user.program?.code as StreamCode) || "NAT_SCI";
           const sess: UserSession = {
             userId: meRes.user.userId || meRes.user.id,
             fullName: meRes.user.fullName,
@@ -3151,38 +3347,113 @@ export default function App() {
             studentId: meRes.user.studentId || undefined,
             stream,
             currentYear: meRes.user.currentYear || 1,
-            mustChangePassword: Boolean(meRes.mustChangePassword),
+            mustChangePassword: Boolean(meRes.user?.mustChangePassword ?? meRes.mustChangePassword),
           };
           setCurrentUser(sess);
+          currentUserRef.current = sess;
           setSelectedStream(stream);
-          setMustChangePassword(Boolean(meRes.mustChangePassword));
+          setMustChangePassword(Boolean(meRes.user?.mustChangePassword ?? meRes.mustChangePassword));
+
+          // Set unlock entitlements
           if (meRes.unlockedProgramTermIds) {
-            setUnlockedSemesters(prev => {
-              const unlocked = new Set<string>(prev);
-              meRes.unlockedProgramTermIds.forEach((id: string) => unlocked.add(id));
-              if (meRes.unlockedStreamCodes) {
-                meRes.unlockedStreamCodes.forEach((sc: string) => {
-                  if (sc === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
-                  if (sc === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
-                });
+            const unlocked = new Set<string>();
+            meRes.unlockedProgramTermIds.forEach((id: string) => unlocked.add(id));
+            if (meRes.unlockedStreamCodes) {
+              meRes.unlockedStreamCodes.forEach((sc: string) => {
+                if (sc === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
+                if (sc === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
+              });
+            }
+            if (meRes.unlockedProgramTermIds.length > 0) {
+              if (stream === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
+              if (stream === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
+            }
+            setUnlockedSemesters(unlocked);
+          } else {
+            setUnlockedSemesters(new Set());
+          }
+
+          // Restore screen from localStorage (role-aware)
+          const isStaff = sess.role !== "STUDENT";
+          let restoredScreen: Screen = isStaff ? "admin" : "dashboard";
+          try {
+            const saved = localStorage.getItem("ev_current_screen") as Screen | null;
+            const adminScreens: Screen[] = [
+              "admin", "structure", "papers", "contributions", "paper-requests",
+              "admin-payments", "users", "audit", "settings", "tokens"
+            ];
+            const studentScreens: Screen[] = [
+              "dashboard", "browse", "semester", "course", "viewer",
+              "checkout", "payments", "requests", "profile", "notifications", "help"
+            ];
+            const publicScreens: Screen[] = ["terms", "privacy", "contact", "help"];
+
+            if (saved) {
+              if (isStaff) {
+                if (adminScreens.includes(saved) || studentScreens.includes(saved) || publicScreens.includes(saved)) {
+                  restoredScreen = saved;
+                } else {
+                  restoredScreen = "admin";
+                }
+              } else {
+                if ((studentScreens.includes(saved) || publicScreens.includes(saved)) && !adminScreens.includes(saved)) {
+                  restoredScreen = saved;
+                } else {
+                  restoredScreen = "dashboard";
+                }
               }
-              if (meRes.unlockedProgramTermIds.length > 0) {
-                if (stream === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
-                if (stream === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
-              }
-              return unlocked;
-            });
+            }
+          } catch {}
+
+          if (isMounted) {
+            setScreen(restoredScreen);
+          }
+        } else {
+          setCurrentUser(null);
+          currentUserRef.current = null;
+          setUnlockedSemesters(new Set());
+          try {
+            const saved = localStorage.getItem("ev_current_screen") as Screen | null;
+            if (saved && ["terms", "privacy", "contact", "help", "login", "signup", "admin-login", "browse"].includes(saved)) {
+              if (isMounted) setScreen(saved);
+            } else {
+              if (isMounted) setScreen("landing");
+            }
+          } catch {
+            if (isMounted) setScreen("landing");
           }
         }
       } catch (err) {
         setCurrentUser(null);
+        currentUserRef.current = null;
+        setUnlockedSemesters(new Set());
+        if (isMounted) setScreen("landing");
       } finally {
-        setAuthLoading(false);
+        if (isMounted) setAuthLoading(false);
       }
     };
 
-    initSession();
-    refreshDatabaseData();
+    const runSetup = async () => {
+      await initSession();
+      await refreshDatabaseData();
+    };
+
+    runSetup();
+
+    // Auto-refresh when tab gains focus or every 30s so users see updates in real-time
+    const handleFocus = () => {
+      refreshDatabaseData();
+    };
+    window.addEventListener("focus", handleFocus);
+    const intervalId = setInterval(() => {
+      refreshDatabaseData();
+    }, 30000);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("focus", handleFocus);
+      clearInterval(intervalId);
+    };
   }, []);
 
   // Handlers for payments (backed by PostgreSQL)
@@ -3193,12 +3464,28 @@ export default function App() {
     const streamName = selectedStream === "NAT_SCI" ? "Natural Science" : "Social Science";
 
     try {
+      let storageKey: string | undefined;
+      let screenshotSha256: string | undefined;
+
+      // Upload screenshot first via authenticated /api/upload contract
+      if (p.screenshotUrl && p.screenshotUrl.startsWith('data:')) {
+        const parts = p.screenshotUrl.split(',');
+        const mimeMatch = p.screenshotUrl.match(/data:([^;]+);/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        const base64Data = parts[1] || parts[0];
+
+        const uploadRes = await api.uploadFile(base64Data, mimeType, 'screenshot');
+        storageKey = uploadRes.storageKey;
+        screenshotSha256 = uploadRes.sha256;
+      }
+
       const created = await api.submitPayment({
-        userId: currentUser.userId || (currentUser as any).id,
         stream: selectedStream,
         method: p.method,
         txId: p.txId,
-        screenshotUrl: p.screenshotUrl,
+        storageKey: storageKey || p.screenshotUrl,
+        screenshotUrl: storageKey || p.screenshotUrl,
+        screenshotSha256,
       });
 
       const newPayment: StorePayment = {
@@ -3240,18 +3527,12 @@ export default function App() {
     if (!confirmed) return;
 
     try {
-      const res = await api.approvePayment(payId, currentUser.userId);
+      await api.approvePayment(payId, currentUser.userId);
       setPayments(prev =>
         prev.map(p => (p.id === payId ? { ...p, status: "APPROVED", reviewedAt: "Just now", reviewedBy: currentUser.fullName } : p))
       );
-      const streamKey = target?.stream === "SOC_SCI" ? "pt-soc-sci-y1s1" : "pt-nat-sci-y1s1";
-      setUnlockedSemesters(prev => new Set([
-        ...prev,
-        streamKey,
-        currentTermKey,
-        res.entitlement?.programTermId || "",
-        target?.programTermId || "",
-      ]));
+      // DO NOT mutate unlockedSemesters for the admin session —
+      // the student's access is managed server-side via their entitlement record.
       setReviewingPayment(null);
       await refreshDatabaseData();
     } catch (err: any) {
@@ -3329,12 +3610,39 @@ export default function App() {
     payoutMethod: PaymentMethod;
     proposedPayout: number;
     notes: string;
+    fileBase64?: string;
+    fileName?: string;
+    mimeType?: string;
   }) => {
     if (!currentUser) return;
     try {
+      let storageKey: string | undefined;
+      let fileSha256: string | undefined;
+
+      if (c.fileBase64) {
+        let detectedMime = c.mimeType || 'application/pdf';
+        const lowerName = (c.fileName || '').toLowerCase();
+        if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) {
+          detectedMime = 'image/jpeg';
+        } else if (lowerName.endsWith('.png')) {
+          detectedMime = 'image/png';
+        } else if (lowerName.endsWith('.pdf')) {
+          detectedMime = 'application/pdf';
+        }
+
+        const uploadRes = await api.uploadFile(c.fileBase64, detectedMime, 'contribution');
+        storageKey = uploadRes.storageKey;
+        fileSha256 = uploadRes.sha256;
+      }
+
+      const matchedCourse = courses.find(
+        crs => crs.id === c.courseId || crs.code.toLowerCase() === c.courseCode.toLowerCase()
+      );
+      const actualCourseId = matchedCourse ? matchedCourse.id : c.courseId;
+
       await api.submitContribution({
         studentId: currentUser.userId,
-        courseId: c.courseId,
+        courseId: actualCourseId,
         examType: c.examType,
         academicYear: c.year,
         examDate: c.examDate,
@@ -3343,18 +3651,23 @@ export default function App() {
         payoutAccount: c.payoutAccount,
         proposedPayoutEtb: c.proposedPayout,
         studentNotes: c.notes,
+        fileName: c.fileName,
+        storageKey,
+        sha256: fileSha256,
+        fileBase64: c.fileBase64,
       });
       await refreshDatabaseData();
       alert("Paper submitted successfully to Admin verification queue.");
     } catch (err: any) {
       alert(err.message || "Failed to submit paper contribution");
+      throw err;
     }
   };
 
   const handleApproveContribution = async (contribId: string) => {
     if (!currentUser) return;
     const amount = parseFloat(payoutInput) || 100;
-    const tx = payoutTxInput || "TB_PAYOUT_SETTLED";
+    const tx = payoutTxInput.trim() || `TB_PAYOUT_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
 
     try {
       await api.approveContribution({
@@ -3371,13 +3684,71 @@ export default function App() {
     }
   };
 
+  const handleRejectContribution = async (contribId: string) => {
+    if (!currentUser) return;
+    const reason = prompt("Enter mandatory rejection reason (e.g. Blurry scan, missing pages, wrong course):");
+    if (!reason || !reason.trim()) {
+      alert("Rejection reason is required.");
+      return;
+    }
+    try {
+      await api.reviewContribution(contribId, {
+        action: "REJECT",
+        reason: reason.trim(),
+      });
+      setReviewingContribution(null);
+      await refreshDatabaseData();
+      alert("Contribution rejected.");
+    } catch (err: any) {
+      alert(err.message || "Failed to reject contribution");
+    }
+  };
+
+  const handleRequestBetterScan = async (contribId: string) => {
+    if (!currentUser) return;
+    try {
+      await api.reviewContribution(contribId, {
+        action: "REQUEST_BETTER_SCAN",
+      });
+      setReviewingContribution(null);
+      await refreshDatabaseData();
+      alert("Requested better scan from student. Status set to CHANGES_REQUESTED.");
+    } catch (err: any) {
+      alert(err.message || "Failed to request better scan");
+    }
+  };
+
+  const handlePaperRequestSubmission = async (courseCodeOrId: string, type: string, year: string, note: string) => {
+    if (!currentUser) return;
+    try {
+      const course = courses.find(c => c.code === courseCodeOrId || c.id === courseCodeOrId);
+      const courseId = course ? course.id : courseCodeOrId;
+      await api.submitPaperRequest({
+        courseId,
+        examType: type.toUpperCase() as any,
+        examYear: year ? parseInt(year, 10) : undefined,
+        notes: note,
+      }, currentUser.userId);
+      await refreshDatabaseData();
+    } catch (err: any) {
+      alert(err.message || "Failed to submit paper request");
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await api.logout();
     } catch (err) {
       console.error("Logout error", err);
     }
+    try {
+      localStorage.removeItem("ev_current_screen");
+      localStorage.removeItem("ev_selected_course_id");
+      localStorage.removeItem("ev_selected_course_code");
+      localStorage.removeItem("ev_selected_paper_id");
+    } catch {}
     setCurrentUser(null);
+    currentUserRef.current = null;
     setUnlockedSemesters(new Set());
     setScreen("landing");
   };
@@ -3388,11 +3759,18 @@ export default function App() {
     if (!notifyContact.trim()) return;
 
     try {
-      await api.registerTermInterest(currentUser?.userId || "anon", "term-y1s2");
+      const y1s2Term = terms?.find(t => t.yearNumber === 1 && t.semesterNumber === 2);
+      const termId = y1s2Term ? y1s2Term.id : "term-y1s2";
+      await api.registerTermInterest(
+        currentUser?.userId || "anon",
+        termId,
+        notifyChannel,
+        notifyContact.trim()
+      );
       const newRecord: TermInterestRecord = {
         id: `interest-${Date.now()}`,
         userId: currentUser?.userId || "anon",
-        termId: "term-y1s2",
+        termId,
         termName: `${selectedStream === "NAT_SCI" ? "Natural Science" : "Social Science"} · Year 1, Semester 2`,
         emailOrPhone: notifyContact.trim(),
         preferredChannel: notifyChannel,
@@ -3442,7 +3820,7 @@ export default function App() {
   }
 
   // Standalone public pages
-  if (screen === "landing") return <Landing go={go}/>;
+  if (screen === "landing") return <Landing go={go} courses={courses} papers={papers}/>;
   if (screen === "terms") return <TermsPage go={go}/>;
   if (screen === "privacy") return <PrivacyPage go={go}/>;
   if (screen === "contact") return <ContactPage go={go}/>;
@@ -3459,6 +3837,8 @@ export default function App() {
           setCurrentUser(u);
           setSelectedStream(u.stream || "NAT_SCI");
           setMustChangePassword(Boolean(mustChange));
+          // Always reset unlock state when a new user logs in
+          setUnlockedSemesters(new Set());
           refreshDatabaseData();
         }}
       />
@@ -3475,13 +3855,15 @@ export default function App() {
           setCurrentUser(u);
           setSelectedStream(u.stream || "NAT_SCI");
           setMustChangePassword(Boolean(mustChange));
+          // Always reset unlock state when a new user logs in
+          setUnlockedSemesters(new Set());
           refreshDatabaseData();
         }}
       />
     );
   }
 
-  if (screen === "viewer") return <Viewer go={go} currentUser={currentUser} paper={selectedPaper}/>;
+  if (screen === "viewer") return <Viewer go={go} currentUser={currentUser} paper={selectedPaper || papers[0] || null}/>;
   if (screen === "checkout") {
     return (
       <Checkout
@@ -3496,7 +3878,7 @@ export default function App() {
   }
 
   // Role separation guards
-  const adminScreens = ["admin","structure","papers","contributions","paper-requests","admin-payments","users","audit","settings","components","tokens"];
+  const adminScreens = ["admin","structure","papers","contributions","paper-requests","admin-payments","users","audit","settings","tokens"];
   if (currentUser.role === "STUDENT" && adminScreens.includes(screen)) {
     return <ForbiddenPage go={go}/>;
   }
@@ -3532,6 +3914,8 @@ export default function App() {
         currentUser={currentUser}
         isUnlocked={isCurrentSemesterUnlocked}
         selectedStream={selectedStream}
+        courses={courses}
+        papers={papers}
         onOpenNotifyModal={() => { setNotifyModalOpen(true); setNotifySubmitted(false); }}
       />
     ) :
@@ -3551,10 +3935,9 @@ export default function App() {
         payments={payments}
         settings={settings}
         currentUser={currentUser}
-        onSelectCourse={(c) => {
-          setSelectedCourse(c);
-          go("course");
-        }}
+        courses={courses}
+        papers={papers}
+        onSelectCourse={handleSelectCourse}
       />
     ) :
     screen === "course" ? (
@@ -3563,7 +3946,7 @@ export default function App() {
         isUnlocked={isCurrentSemesterUnlocked}
         course={selectedCourse}
         papers={papers}
-        onSelectPaper={setSelectedPaper}
+        onSelectPaper={handleSelectPaper}
       />
     ) :
     screen === "payments" ? <Payments payments={payments} settings={settings} go={go}/> :
@@ -3571,8 +3954,9 @@ export default function App() {
       <Requests
         currentUser={currentUser}
         contributions={contributions}
+        courses={courses}
         onSubmitContribution={handleContributionSubmission}
-        onSubmitRequest={() => {}}
+        onSubmitRequest={handlePaperRequestSubmission}
       />
     ) :
     screen === "profile" ? <Profile currentUser={currentUser} onLogout={handleLogout} go={go}/> :
@@ -3650,7 +4034,7 @@ export default function App() {
     screen === "settings" ? (
       <SettingsManager settings={settings} currentUser={currentUser} onSaveSettings={handleSaveSettings} />
     ) :
-    screen === "components" ? <ComponentsPage/> :
+    screen === "components" ? <NotFoundPage go={go}/> :
     <TokensPage/>;
 
   return (
@@ -3768,10 +4152,40 @@ export default function App() {
                   Uploaded Payment Screenshot:
                 </label>
                 <div className="screenshot-preview-box">
-                  <img
-                    src={reviewingPayment.screenshotUrl || "https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=600&q=80"}
-                    alt="Payment receipt proof"
-                  />
+                  {Boolean(reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl) ? (
+                    <img
+                      src={
+                        (reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '').startsWith('http') ||
+                        (reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '').startsWith('data:') ||
+                        (reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '').startsWith('/api/')
+                          ? (reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '')
+                          : `/api/storage/view?key=${encodeURIComponent(reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '')}`
+                      }
+                      alt="Payment receipt proof"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = 'none';
+                        const fallback = (e.target as HTMLElement).parentElement?.querySelector('.receipt-missing');
+                        if (fallback) (fallback as HTMLElement).style.display = 'flex';
+                      }}
+                    />
+                  ) : null}
+                  <div
+                    className="receipt-missing"
+                    style={{
+                      display: reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl ? 'none' : 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '32px 16px',
+                      background: 'rgba(0,0,0,0.03)',
+                      borderRadius: '8px',
+                      color: 'var(--muted)',
+                      gap: '8px',
+                    }}
+                  >
+                    <Icon name="help" size={24} />
+                    <span>Receipt image missing from secure storage</span>
+                  </div>
                 </div>
               </div>
 
@@ -3857,6 +4271,31 @@ export default function App() {
                 {reviewingContribution.studentNotes && <span>Notes: <i>"{reviewingContribution.studentNotes}"</i></span>}
               </div>
 
+              {reviewingContribution.storageKey && (
+                <div style={{ marginTop: "12px", marginBottom: "6px" }}>
+                  <a
+                    href={`/api/storage/view?key=${encodeURIComponent(reviewingContribution.storageKey)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      padding: "9px 14px",
+                      background: "rgba(234, 88, 12, 0.12)",
+                      color: "var(--accent, #ea580c)",
+                      borderRadius: "6px",
+                      fontSize: "0.85rem",
+                      fontWeight: 600,
+                      textDecoration: "none",
+                      border: "1px solid rgba(234, 88, 12, 0.3)",
+                    }}
+                  >
+                    <Icon name="file" /> Inspect Uploaded Scan ({reviewingContribution.fileName}) ↗
+                  </a>
+                </div>
+              )}
+
               <div className="form-grid">
                 <Input
                   label="Approved buyout payout (ETB)"
@@ -3880,11 +4319,21 @@ export default function App() {
                 </span>
               </div>
             </div>
-            <div className="modal-footer">
-              <Button variant="secondary" onClick={() => setReviewingContribution(null)}>Cancel</Button>
-              <Button onClick={() => handleApproveContribution(reviewingContribution.id)}>
-                Approve Payout & Publish Paper
-              </Button>
+            <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <Button variant="danger" onClick={() => handleRejectContribution(reviewingContribution.id)}>
+                  Reject
+                </Button>
+                <Button variant="secondary" onClick={() => handleRequestBetterScan(reviewingContribution.id)}>
+                  Request Better Scan
+                </Button>
+              </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <Button variant="secondary" onClick={() => setReviewingContribution(null)}>Cancel</Button>
+                <Button onClick={() => handleApproveContribution(reviewingContribution.id)}>
+                  Approve Payout & Publish Paper
+                </Button>
+              </div>
             </div>
           </div>
         </div>
