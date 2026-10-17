@@ -26,6 +26,7 @@ export interface StorePayment {
   paymentMethod: PaymentMethod;
   transactionId: string;
   screenshotUrl?: string;
+  screenshotKey?: string;
   status: PaymentStatus;
   rejectionReason?: string;
   resubmitCount?: number;
@@ -51,6 +52,7 @@ export interface StoreContribution {
   declarationText?: string;
   studentNotes?: string;
   fileName: string;
+  storageKey?: string;
   fileSizeBytes: number;
   payoutPaymentMethod: PaymentMethod;
   payoutAccount: string;
@@ -154,6 +156,7 @@ export interface PlatformConfig {
 
 export interface FreshmanCourseItem extends CourseSummary {
   streamScope: 'SHARED' | 'NAT_SCI' | 'SOC_SCI';
+  hasFreeSample?: boolean;
 }
 
 export const FRESHMAN_11_COURSES: FreshmanCourseItem[] = [

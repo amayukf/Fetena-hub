@@ -28,6 +28,7 @@ export interface BootstrapData {
   notifications: any[];
   entitlements: any[];
   termInterests: any[];
+  terms?: any[];
   users: any[];
 }
 
@@ -53,26 +54,42 @@ export const api = {
     return json;
   },
 
+  async uploadFile(fileBase64: string, reportedMime: string, category: 'paper' | 'screenshot' | 'contribution' = 'paper') {
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileBase64, reportedMime, category }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || 'Failed to upload file');
+    }
+    return json as { storageKey: string; sha256: string; mimeType: string; sizeBytes: number };
+  },
+
   async submitPayment(data: {
-    userId: string;
+    userId?: string;
     programTermId?: string;
     stream?: StreamCode;
     method: PaymentMethod;
     txId: string;
     screenshotUrl?: string;
     screenshotSha256?: string;
+    storageKey?: string;
+    receiptImageStorageKey?: string;
+    receiptImageSha256?: string;
   }) {
     const res = await fetch('/api/payments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: data.userId,
         programTermId: data.programTermId,
         stream: data.stream,
         paymentMethod: data.method,
         transactionId: data.txId,
-        screenshotUrl: data.screenshotUrl,
-        screenshotSha256: data.screenshotSha256,
+        storageKey: data.storageKey || data.receiptImageStorageKey || data.screenshotUrl,
+        screenshotUrl: data.storageKey || data.receiptImageStorageKey || data.screenshotUrl,
+        screenshotSha256: data.screenshotSha256 || data.receiptImageSha256,
       }),
     });
     const json = await res.json();
@@ -134,7 +151,7 @@ export const api = {
   },
 
   async submitContribution(data: {
-    studentId: string;
+    studentId?: string;
     courseId: string;
     examType: any;
     academicYear: number;
@@ -146,6 +163,9 @@ export const api = {
     studentNotes?: string;
     fileName?: string;
     fileSizeBytes?: number;
+    storageKey?: string;
+    sha256?: string;
+    fileBase64?: string;
   }) {
     const res = await fetch('/api/contributions', {
       method: 'POST',
@@ -392,15 +412,46 @@ export const api = {
     return json;
   },
 
-  async registerTermInterest(userId: string, termId: string) {
+  async registerTermInterest(userId: string, termId: string, channel?: string, contactValue?: string) {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (userId && userId !== 'anon') headers['x-actor-id'] = userId;
     const res = await fetch('/api/term-interest', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, termId }),
+      headers,
+      body: JSON.stringify({ userId, termId, channel, contactValue }),
     });
     const json = await res.json();
     if (!res.ok) {
       throw new Error(json.error || 'Failed to register interest');
+    }
+    return json;
+  },
+
+  async submitPaperRequest(
+    data: { courseId: string; examType: string; examYear?: number; notes?: string },
+    actorId?: string
+  ) {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (actorId) headers['x-actor-id'] = actorId;
+    const res = await fetch('/api/requests', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || 'Failed to submit paper request');
+    }
+    return json;
+  },
+
+  async getPaperRequests(actorId?: string) {
+    const headers: Record<string, string> = {};
+    if (actorId) headers['x-actor-id'] = actorId;
+    const res = await fetch('/api/requests', { headers });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || 'Failed to fetch paper requests');
     }
     return json;
   },

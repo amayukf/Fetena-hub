@@ -129,29 +129,73 @@ export default function AuditLogViewer() {
                 </tr>
               ) : (
                 logs.map(log => {
-                  const detailsStr =
-                    typeof log.details === 'object' && log.details !== null
-                      ? JSON.stringify(log.details)
-                      : String(log.details || '');
+                  const who = log.actor?.fullName || 'System Automated';
+                  const role = log.actor?.role || 'SYSTEM';
+                  const what = log.action || 'System Event';
+
+                  let d: any = {};
+                  if (typeof log.details === 'object' && log.details !== null) {
+                    d = log.details;
+                  } else if (typeof log.details === 'string') {
+                    try { d = JSON.parse(log.details); } catch { d = {}; }
+                  }
+
+                  let item = '';
+                  if (d.referenceCode) {
+                    item = `Payment #${d.referenceCode}`;
+                  } else if (d.title || d.courseCode) {
+                    item = [d.courseCode, d.title].filter(Boolean).join(' · ');
+                  } else if (d.studentId || d.fullName) {
+                    item = [d.fullName, d.studentId].filter(Boolean).join(' · ');
+                  } else if (d.code) {
+                    item = `Course: ${d.code}`;
+                  } else if (d.key) {
+                    item = `Setting: ${d.key}`;
+                  } else if (log.entityType) {
+                    item = `${log.entityType}${log.entityId ? ` #${log.entityId.slice(0, 8)}` : ''}`;
+                  } else {
+                    item = 'System Record';
+                  }
+
+                  const safeEntries = Object.entries(d).filter(
+                    ([k]) => !['password', 'passwordhash', 'token', 'sessiontoken', 'salt', 'sessiontokenhash'].includes(k.toLowerCase())
+                  );
 
                   return (
                     <tr key={log.id}>
                       <td>
-                        <strong style={{ color: 'var(--ink)' }}>{log.action}</strong>
+                        <strong style={{ color: 'var(--ink)' }}>{what}</strong>
                       </td>
                       <td>
                         <div>
-                          <strong>{log.actor?.fullName || 'System Automated'}</strong>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-                            {log.actor?.role || 'SYSTEM'}
+                          <strong>{who}</strong>
+                          <div style={{ marginTop: '3px' }}>
+                            <Badge tone={role === 'ADMIN' || role === 'SUPER_ADMIN' ? 'accent' : 'neutral'}>
+                              {role}
+                            </Badge>
                           </div>
                         </div>
                       </td>
                       <td>
-                        <code style={{ fontSize: '0.75rem' }}>{log.entityType || '—'}</code>
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            background: 'var(--canvas)',
+                            border: '1px solid var(--line)',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                            color: 'var(--ink)',
+                          }}
+                        >
+                          {item}
+                        </span>
                       </td>
                       <td>
-                        <code>{log.ipAddress || '197.156.102.10'}</code>
+                        <code>{log.ipAddress || '127.0.0.1'}</code>
                       </td>
                       <td>
                         <small style={{ color: 'var(--muted)' }}>
@@ -177,21 +221,31 @@ export default function AuditLogViewer() {
                           {log.riskLevel}
                         </Badge>
                       </td>
-                      <td style={{ maxWidth: '280px' }}>
-                        <span
-                          style={{
-                            fontSize: '0.75rem',
-                            fontFamily: 'monospace',
-                            color: 'var(--ink-2)',
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            overflow: 'hidden',
-                          }}
-                          title={detailsStr}
-                        >
-                          {detailsStr}
-                        </span>
+                      <td style={{ maxWidth: '300px' }}>
+                        {safeEntries.length > 0 ? (
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                            {safeEntries.slice(0, 3).map(([k, v]) => (
+                              <span
+                                key={k}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  padding: '2px 6px',
+                                  background: 'var(--canvas)',
+                                  borderRadius: '4px',
+                                  fontSize: '0.72rem',
+                                  border: '1px solid var(--line)',
+                                  color: 'var(--ink-2)',
+                                }}
+                              >
+                                <strong>{k}:</strong> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Standard event</span>
+                        )}
                       </td>
                     </tr>
                   );

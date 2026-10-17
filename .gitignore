@@ -13,6 +13,9 @@ logs/
 .tmp-*
 /.figma/design-context/
 
+# Private file storage — never commit uploaded receipts or exam PDFs
+storage/
+
 # Platform-managed agentplat state, not project source. In the
 # client-initiated single-repo workspace layout (make's `Path: "."` spec) the
 # repo root IS the workspace root, so these land inside this repo rather than

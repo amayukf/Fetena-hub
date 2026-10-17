@@ -73,6 +73,9 @@ export const paymentSubmissionSchema = z.object({
     .optional(), // Uploaded image data or file reference
   screenshotUrl: z.string().optional(),
   screenshotSha256: z.string().optional(),
+  storageKey: z.string().optional(),
+  receiptImageStorageKey: z.string().optional(),
+  receiptImageSha256: z.string().optional(),
 });
 
 export const paymentApprovalSchema = z.object({

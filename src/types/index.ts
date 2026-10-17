@@ -69,6 +69,7 @@ export interface CourseSummary {
   isShared: boolean;
   paperCount: number;
   breakdown: string;
+  hasFreeSample?: boolean;
 }
 
 export interface ExamPaperItem {
