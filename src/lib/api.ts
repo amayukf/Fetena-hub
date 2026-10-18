@@ -32,39 +32,151 @@ export interface BootstrapData {
   users: any[];
 }
 
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+/** The server rejected the request because there is no valid session. */
+export class AuthExpiredError extends Error {
+  constructor(message = 'Your session has expired. Please sign in again.') {
+    super(message);
+    this.name = 'AuthExpiredError';
+  }
+}
+
+/** The request never completed: offline, DNS failure, timeout, or a dead server. */
+export class NetworkError extends Error {
+  constructor(message = 'Could not reach the server. Check your connection and try again.') {
+    super(message);
+    this.name = 'NetworkError';
+  }
+}
+
+/**
+ * Single place to react to an expired session. Without this, every screen just
+ * showed a raw error string and the user was never sent back to sign in.
+ */
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
+// ---------------------------------------------------------------------------
+// Request core
+// ---------------------------------------------------------------------------
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 120_000;
+
+interface RequestOptions {
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  body?: unknown;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+  /** Do not invoke the global unauthorized handler (used for session probing). */
+  silentAuth?: boolean;
+  /** Resolve with whatever body was returned instead of throwing on !ok. */
+  lenient?: boolean;
+}
+
+function buildHeaders(actorId?: string, actorRole?: string, asJson = false): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (asJson) headers['Content-Type'] = 'application/json';
+  if (actorId) headers['x-actor-id'] = actorId;
+  if (actorRole) headers['x-actor-role'] = actorRole;
+  return headers;
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const {
+    method = 'GET',
+    body,
+    headers = {},
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    silentAuth = false,
+    lenient = false,
+  } = options;
+
+  // A hung request must not block the UI forever — this app targets 2G/3G.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+      credentials: 'same-origin',
+    });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new NetworkError('The request took too long and was cancelled. Please try again.');
+    }
+    throw new NetworkError();
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // Parse defensively. An empty body, an HTML error page, or a 204 previously
+  // surfaced as "Unexpected end of JSON input" instead of a readable message.
+  const text = await res.text().catch(() => '');
+  let json: any = null;
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+  }
+
+  if (res.status === 401) {
+    if (!silentAuth) unauthorizedHandler?.();
+    if (lenient) return (json ?? { error: 'Authentication required' }) as T;
+    throw new AuthExpiredError(json?.error);
+  }
+
+  if (!res.ok) {
+    if (lenient) return (json ?? {}) as T;
+    const error: any = new Error(
+      json?.error || `Request failed (HTTP ${res.status} ${res.statusText || ''})`.trim()
+    );
+    error.status = res.status;
+    error.details = json?.details;
+    throw error;
+  }
+
+  if (json === null) {
+    if (lenient) return {} as T;
+    throw new NetworkError('The server returned an unexpected, non-JSON response.');
+  }
+
+  return json as T;
+}
+
 export const api = {
   async getBootstrap(): Promise<BootstrapData> {
-    const res = await fetch('/api/bootstrap');
-    if (!res.ok) {
-      throw new Error(`Failed to bootstrap data: ${res.statusText}`);
-    }
-    return res.json();
+    return request<BootstrapData>('/api/bootstrap', { silentAuth: true });
   },
 
   async getAdminOverview(actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = {};
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch('/api/admin/overview', { headers });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to fetch admin overview');
-    }
-    return json;
+    return request<any>('/api/admin/overview', {
+      headers: buildHeaders(actorId, actorRole),
+    });
   },
 
   async uploadFile(fileBase64: string, reportedMime: string, category: 'paper' | 'screenshot' | 'contribution' = 'paper') {
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileBase64, reportedMime, category }),
-    });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to upload file');
-    }
-    return json as { storageKey: string; sha256: string; mimeType: string; sizeBytes: number };
+    return request<{ storageKey: string; sha256: string; mimeType: string; sizeBytes: number }>(
+      '/api/upload',
+      {
+        method: 'POST',
+        headers: buildHeaders(undefined, undefined, true),
+        body: { fileBase64, reportedMime, category },
+        timeoutMs: UPLOAD_TIMEOUT_MS,
+      }
+    );
   },
 
   async submitPayment(data: {
@@ -79,75 +191,44 @@ export const api = {
     receiptImageStorageKey?: string;
     receiptImageSha256?: string;
   }) {
-    const res = await fetch('/api/payments', {
+    const receiptKey = data.storageKey || data.receiptImageStorageKey || data.screenshotUrl;
+    return request<any>('/api/payments', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      headers: buildHeaders(undefined, undefined, true),
+      body: {
         programTermId: data.programTermId,
         stream: data.stream,
         paymentMethod: data.method,
         transactionId: data.txId,
-        storageKey: data.storageKey || data.receiptImageStorageKey || data.screenshotUrl,
-        screenshotUrl: data.storageKey || data.receiptImageStorageKey || data.screenshotUrl,
+        storageKey: receiptKey,
+        screenshotUrl: receiptKey,
         screenshotSha256: data.screenshotSha256 || data.receiptImageSha256,
-      }),
+      },
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to submit payment');
-    }
-    return json;
   },
 
   async approvePayment(paymentId: string, reviewerId?: string, actorRole?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (reviewerId) headers['x-actor-id'] = reviewerId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/payments/${paymentId}/approve`, {
+    return request<any>(`/api/payments/${paymentId}/approve`, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ reviewerId, actorRole }),
+      headers: buildHeaders(reviewerId, actorRole, true),
+      body: { reviewerId, actorRole },
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to approve payment');
-    }
-    return json;
   },
 
   async rejectPayment(paymentId: string, reason: string, reviewerId?: string, actorRole?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (reviewerId) headers['x-actor-id'] = reviewerId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/payments/${paymentId}/reject`, {
+    return request<any>(`/api/payments/${paymentId}/reject`, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ reason, reviewerId, actorRole }),
+      headers: buildHeaders(reviewerId, actorRole, true),
+      body: { reason, reviewerId, actorRole },
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to reject payment');
-    }
-    return json;
   },
 
   async revokePayment(paymentId: string, reason: string, reviewerId?: string, actorRole?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (reviewerId) headers['x-actor-id'] = reviewerId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/payments/${paymentId}/revoke`, {
+    return request<any>(`/api/payments/${paymentId}/revoke`, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ reason, reviewerId, actorRole }),
+      headers: buildHeaders(reviewerId, actorRole, true),
+      body: { reason, reviewerId, actorRole },
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to revoke access');
-    }
-    return json;
   },
 
   async submitContribution(data: {
@@ -167,16 +248,12 @@ export const api = {
     sha256?: string;
     fileBase64?: string;
   }) {
-    const res = await fetch('/api/contributions', {
+    return request<any>('/api/contributions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      headers: buildHeaders(undefined, undefined, true),
+      body: data,
+      timeoutMs: UPLOAD_TIMEOUT_MS,
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to submit contribution');
-    }
-    return json;
   },
 
   async approveContribution(data: {
@@ -185,21 +262,18 @@ export const api = {
     payoutTxId: string;
     reviewerId?: string;
   }) {
-    const res = await fetch(`/api/contributions/${data.contributionId}/approve`, {
+    return request<any>(`/api/contributions/${data.contributionId}/approve`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      headers: buildHeaders(undefined, undefined, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to approve contribution');
-    }
-    return json;
   },
 
   async checkPaperDuplicate(sha256: string) {
-    const res = await fetch(`/api/papers/check-duplicate?sha256=${encodeURIComponent(sha256)}`);
-    return res.json();
+    return request<any>(`/api/papers/check-duplicate?sha256=${encodeURIComponent(sha256)}`, {
+      silentAuth: true,
+      lenient: true,
+    });
   },
 
   async getPapers(params?: { courseId?: string; examType?: string; status?: string; includeDeleted?: boolean; search?: string }) {
@@ -210,179 +284,92 @@ export const api = {
     if (params?.includeDeleted) query.set('includeDeleted', 'true');
     if (params?.search) query.set('search', params.search);
 
-    const res = await fetch(`/api/papers?${query.toString()}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to fetch papers');
-    return json;
+    return request<any>(`/api/papers?${query.toString()}`);
   },
 
   async createPaper(data: any, actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch('/api/papers', {
+    return request<any>('/api/papers', {
       method: 'POST',
-      headers,
-      body: JSON.stringify(data),
+      headers: buildHeaders(actorId, actorRole, true),
+      body: data,
+      timeoutMs: UPLOAD_TIMEOUT_MS,
     });
-    const json = await res.json();
-    if (!res.ok) {
-      const err: any = new Error(json.error || 'Failed to create paper');
-      err.details = json.details;
-      throw err;
-    }
-    return json;
   },
 
   async updatePaper(paperId: string, data: any, actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/papers/${paperId}`, {
+    return request<any>(`/api/papers/${paperId}`, {
       method: 'PUT',
-      headers,
-      body: JSON.stringify(data),
+      headers: buildHeaders(actorId, actorRole, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to update paper');
-    return json;
   },
 
   async replacePaperFile(paperId: string, data: any, actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/papers/${paperId}/replace-file`, {
+    return request<any>(`/api/papers/${paperId}/replace-file`, {
       method: 'POST',
-      headers,
-      body: JSON.stringify(data),
+      headers: buildHeaders(actorId, actorRole, true),
+      body: data,
+      timeoutMs: UPLOAD_TIMEOUT_MS,
     });
-    const json = await res.json();
-    if (!res.ok) {
-      const err: any = new Error(json.error || 'Failed to replace file');
-      err.details = json.details;
-      throw err;
-    }
-    return json;
   },
 
   async deletePaper(paperId: string, actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = {};
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/papers/${paperId}`, {
+    return request<any>(`/api/papers/${paperId}`, {
       method: 'DELETE',
-      headers,
+      headers: buildHeaders(actorId, actorRole),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to delete paper');
-    return json;
   },
 
   async restorePaper(paperId: string, actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = {};
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/papers/${paperId}/restore`, {
+    return request<any>(`/api/papers/${paperId}/restore`, {
       method: 'POST',
-      headers,
+      headers: buildHeaders(actorId, actorRole),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to restore paper');
-    return json;
   },
 
   async getWantedPapers() {
-    const res = await fetch('/api/wanted-papers');
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to fetch wanted papers');
-    return json;
+    return request<any>('/api/wanted-papers');
   },
 
   async createWantedPaper(data: any, actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch('/api/wanted-papers', {
+    return request<any>('/api/wanted-papers', {
       method: 'POST',
-      headers,
-      body: JSON.stringify(data),
+      headers: buildHeaders(actorId, actorRole, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to create wanted paper');
-    return json;
   },
 
   async updateWantedPaper(wantedId: string, data: any, actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/wanted-papers/${wantedId}`, {
+    return request<any>(`/api/wanted-papers/${wantedId}`, {
       method: 'PATCH',
-      headers,
-      body: JSON.stringify(data),
+      headers: buildHeaders(actorId, actorRole, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to update wanted paper');
-    return json;
   },
 
   async deleteWantedPaper(wantedId: string, actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = {};
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/wanted-papers/${wantedId}`, {
+    return request<any>(`/api/wanted-papers/${wantedId}`, {
       method: 'DELETE',
-      headers,
+      headers: buildHeaders(actorId, actorRole),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to delete wanted paper');
-    return json;
   },
 
   async getUsers(actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = {};
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch('/api/users', { headers });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to fetch users');
-    return json;
+    return request<any>('/api/users', { headers: buildHeaders(actorId, actorRole) });
   },
 
   async getUserAccessHistory(userId: string, actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = {};
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/users/${userId}/access-history`, { headers });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to fetch user access history');
-    return json;
+    return request<any>(`/api/users/${userId}/access-history`, {
+      headers: buildHeaders(actorId, actorRole),
+    });
   },
 
   async updateUser(userId: string, data: any, actorId?: string, actorRole?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (actorId) headers['x-actor-id'] = actorId;
-    if (actorRole) headers['x-actor-role'] = actorRole;
-
-    const res = await fetch(`/api/users/${userId}`, {
+    return request<any>(`/api/users/${userId}`, {
       method: 'PATCH',
-      headers,
-      body: JSON.stringify(data),
+      headers: buildHeaders(actorId, actorRole, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to update user');
-    return json;
   },
 
   async getAuditLogs(params?: { riskLevel?: string; entityType?: string; search?: string; limit?: number; offset?: number }) {
@@ -393,85 +380,56 @@ export const api = {
     if (params?.limit) query.set('limit', String(params.limit));
     if (params?.offset) query.set('offset', String(params.offset));
 
-    const res = await fetch(`/api/audit-logs?${query.toString()}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to fetch audit logs');
-    return json;
+    return request<any>(`/api/audit-logs?${query.toString()}`);
   },
 
   async saveSettings(settings: Record<string, string>, actorId?: string) {
-    const res = await fetch('/api/settings', {
+    return request<any>('/api/settings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings, actorId }),
+      headers: buildHeaders(undefined, undefined, true),
+      body: { settings, actorId },
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to update settings');
-    }
-    return json;
   },
 
   async registerTermInterest(userId: string, termId: string, channel?: string, contactValue?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (userId && userId !== 'anon') headers['x-actor-id'] = userId;
-    const res = await fetch('/api/term-interest', {
+    return request<any>('/api/term-interest', {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ userId, termId, channel, contactValue }),
+      headers: buildHeaders(userId && userId !== 'anon' ? userId : undefined, undefined, true),
+      body: { userId, termId, channel, contactValue },
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to register interest');
-    }
-    return json;
   },
 
   async submitPaperRequest(
     data: { courseId: string; examType: string; examYear?: number; notes?: string },
     actorId?: string
   ) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (actorId) headers['x-actor-id'] = actorId;
-    const res = await fetch('/api/requests', {
+    return request<any>('/api/requests', {
       method: 'POST',
-      headers,
-      body: JSON.stringify(data),
+      headers: buildHeaders(actorId, undefined, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to submit paper request');
-    }
-    return json;
   },
 
   async getPaperRequests(actorId?: string) {
-    const headers: Record<string, string> = {};
-    if (actorId) headers['x-actor-id'] = actorId;
-    const res = await fetch('/api/requests', { headers });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to fetch paper requests');
-    }
-    return json;
+    return request<any>('/api/requests', { headers: buildHeaders(actorId) });
   },
 
   async checkPaperAccess(paperId: string, userId: string) {
-    const res = await fetch(`/api/papers/${paperId}/access?userId=${encodeURIComponent(userId)}`);
-    return res.json();
+    // Callers treat the payload as an access decision, so never let a failed
+    // request masquerade as one — resolve with the error body and let the
+    // caller inspect it.
+    return request<any>(`/api/papers/${paperId}/access?userId=${encodeURIComponent(userId)}`, {
+      silentAuth: true,
+      lenient: true,
+    });
   },
 
   async reportPaperProblem(paperId: string, data: { userId: string; category: string; description?: string }) {
-    const res = await fetch(`/api/papers/${paperId}/report`, {
+    return request<any>(`/api/papers/${paperId}/report`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      headers: buildHeaders(undefined, undefined, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Failed to submit problem report');
-    }
-    return json;
   },
 
   async signup(data: {
@@ -482,90 +440,67 @@ export const api = {
     stream?: StreamCode;
     password: string;
   }) {
-    const res = await fetch('/api/auth/signup', {
+    return request<any>('/api/auth/signup', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      headers: buildHeaders(undefined, undefined, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Registration failed');
-    }
-    return json;
   },
 
   async login(data: { identifier: string; password: string }) {
-    const res = await fetch('/api/auth/login', {
+    return request<any>('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      headers: buildHeaders(undefined, undefined, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Sign in failed');
-    }
-    return json;
   },
 
   async getMe() {
-    const res = await fetch('/api/auth/me');
-    if (!res.ok) return { authenticated: false, user: null, unlockedProgramTermIds: [] };
-    return res.json();
+    try {
+      return await request<any>('/api/auth/me', { silentAuth: true });
+    } catch (err) {
+      // Only a genuine 401 means "no session". A 5xx or a network outage is an
+      // error the caller must see, not a silent logout.
+      if (err instanceof AuthExpiredError) {
+        return { authenticated: false, user: null, unlockedProgramTermIds: [] };
+      }
+      throw err;
+    }
   },
 
   async logout() {
-    const res = await fetch('/api/auth/logout', { method: 'POST' });
-    return res.json();
+    return request<any>('/api/auth/logout', { method: 'POST', silentAuth: true, lenient: true });
   },
 
   async changePassword(data: { oldPassword?: string; newPassword: string; userId?: string }) {
-    const res = await fetch('/api/auth/change-password', {
+    return request<any>('/api/auth/change-password', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      headers: buildHeaders(undefined, undefined, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || 'Password update failed');
-    }
-    return json;
   },
 
   async getMyContributions() {
-    const res = await fetch('/api/contributions/my');
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to fetch contributions');
-    return json;
+    return request<any>('/api/contributions/my');
   },
 
   async reviewContribution(contributionId: string, data: { action: string; approvedPayoutEtb?: number; counterOfferEtb?: number; reason?: string }) {
-    const res = await fetch(`/api/contributions/${contributionId}/review`, {
+    return request<any>(`/api/contributions/${contributionId}/review`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      headers: buildHeaders(undefined, undefined, true),
+      body: data,
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to review contribution');
-    return json;
   },
 
   async publishContribution(contributionId: string) {
-    const res = await fetch(`/api/contributions/${contributionId}/publish`, {
-      method: 'POST',
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to publish contribution');
-    return json;
+    return request<any>(`/api/contributions/${contributionId}/publish`, { method: 'POST' });
   },
 
   async payoutContribution(contributionId: string, payoutTxId: string) {
-    const res = await fetch(`/api/contributions/${contributionId}/payout`, {
+    return request<any>(`/api/contributions/${contributionId}/payout`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ payoutTxId }),
+      headers: buildHeaders(undefined, undefined, true),
+      body: { payoutTxId },
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Failed to disburse payout');
-    return json;
   },
 };
