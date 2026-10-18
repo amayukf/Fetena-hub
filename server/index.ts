@@ -15,11 +15,18 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// A real deployment must behave like production: this flips secure cookies on,
-// disables actor impersonation, and enforces the strict SESSION_SECRET checks.
-process.env.NODE_ENV = process.env.NODE_ENV || 'production';
-
 import { handleApiRequest, prisma } from './apiHandler';
+
+// This is the production entrypoint, so production mode is enforced rather than
+// merely defaulted. Note the ordering: ESM evaluates every import *before* this
+// module's top-level statements, and importing @prisma/client loads `.env` —
+// which can set NODE_ENV. A `.env` containing NODE_ENV="development" therefore
+// used to silently downgrade `npm start`: actor impersonation stayed enabled
+// (a full auth bypass via the x-actor-id header), cookies lost the Secure flag,
+// and the production fail-fast checks were skipped. Assert it after the imports.
+if (process.env.EXAMVAULT_ALLOW_NON_PRODUCTION !== 'yes') {
+  process.env.NODE_ENV = 'production';
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
@@ -147,7 +154,11 @@ const server = http.createServer(async (req, res) => {
   applySecurityHeaders(res);
 
   try {
-    if (req.url?.startsWith('/api')) {
+    // `/health` is handled by the API layer too: otherwise it fell through to the
+    // SPA fallback and a load balancer health check got a 200 + index.html, so an
+    // instance with a dead database would still be reported as healthy.
+    const urlPath = (req.url || '/').split('?')[0];
+    if (urlPath.startsWith('/api') || urlPath === '/health') {
       await handleApiRequest(req, res);
       return;
     }
@@ -175,6 +186,13 @@ server.listen(port, host, () => {
   console.log(`[server] ExamVault listening on http://${host}:${port} (NODE_ENV=${process.env.NODE_ENV})`);
   if (!fs.existsSync(distDir)) {
     console.warn('[server] WARNING: dist/ not found — run "npm run build" before starting.');
+  }
+  if (process.env.NODE_ENV !== 'production' && process.env.ALLOW_ACTOR_IMPERSONATION !== 'false') {
+    console.warn(
+      '[server] WARNING: actor impersonation is ENABLED — any request can authenticate as any user\n' +
+        '         via the x-actor-id header. This must never be exposed on a real deployment\n' +
+        '         (set ALLOW_ACTOR_IMPERSONATION="false" or NODE_ENV=production).'
+    );
   }
 });
 

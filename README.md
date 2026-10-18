@@ -37,7 +37,8 @@ npm run seed
 npm run create-admin admin@ambo.edu.et CampusAdminPassword2026!
 
 # 7. (Optional) Seed local dev test accounts (non-production only)
-npm run seed:dev
+#    Requires SEED_DEV_CONFIRM=yes and refuses production-looking databases.
+SEED_DEV_CONFIRM=yes npm run seed:dev
 
 # 8. Start the development server
 npm run dev
@@ -60,12 +61,17 @@ Copy `.env.example` to `.env.local` to override settings for local development:
 | Variable | Description | Default / Example |
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL connection URL | `postgresql://postgres:postgres@localhost:5432/examvault_db` |
+| `TEST_DATABASE_URL` | Scratch database used by `npm test` (name must contain `test`, or the suites refuse to run) | `postgresql://...examvault_test_db` |
 | `DIRECT_URL` | Direct connection for Prisma migrations | `postgresql://postgres:postgres@localhost:5432/examvault_db` |
-| `SESSION_SECRET` | 32+ char secret for HMAC signing & viewer tickets | `examvault-super-secure-production-secret-min-32-chars` |
-| `NODE_ENV` | Environment mode (`development` or `production`) | `development` |
-| `PORT` | Local server port | `8443` |
+| `SESSION_SECRET` | **Required.** 32+ char secret for HMAC signing & viewer tickets; startup aborts without it | `openssl rand -base64 32` |
+| `NODE_ENV` | Environment mode (`development` or `production`). `npm start` forces `production` | `development` |
+| `ALLOW_ACTOR_IMPERSONATION` | Dev/test only. When not `"false"`, a non-production environment trusts the `x-actor-id` header (a full auth bypass). Always `"false"` on a real deployment | `"false"` |
+| `EXAMVAULT_ALLOW_NON_PRODUCTION` | Escape hatch: set to `yes` to let `npm start` run outside production mode | unset |
+| `SEED_DEV_CONFIRM` | Must be `yes` for `npm run seed:dev` to run | unset |
+| `PORT` | Local server port | `8443` (dev), `8080` (`npm start`) |
 | `ADMIN_EMAIL` | Optional initial admin email on startup | `admin@ambo.edu.et` |
 | `ADMIN_INITIAL_PASSWORD` | Optional initial admin password | `AdminStrongPassword2026!` |
+| `STORAGE_PROVIDER` | `local`, `r2`, or `s3`. `r2`/`s3` **require** credentials — the server refuses to fall back to local disk | `local` |
 | `S3_ENDPOINT` / `R2_ENDPOINT` | Cloudflare R2 / S3 Endpoint URL | `https://<account-id>.r2.cloudflarestorage.com` |
 | `S3_ACCESS_KEY_ID` / `R2_ACCESS_KEY_ID` | Storage Access Key | `xxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
 | `S3_SECRET_ACCESS_KEY` / `R2_SECRET_ACCESS_KEY`| Storage Secret Key | `xxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
@@ -88,6 +94,7 @@ npm run create-admin superadmin@woliso.edu.et SecureTempPassword2026#
 - The user is created with `role: ADMIN` and `mustChangePassword: true`.
 - On their first login, the user is required to set a new password before accessing the system.
 - Existing admins can also manage roles and permissions via the **Admin Dashboard > Users** screen.
+- **Safety**: the script refuses to promote an account that already exists with a non-admin role, and refuses to overwrite an existing password, unless you pass `--force`. It also rejects admin passwords shorter than 12 characters.
 
 ---
 
@@ -123,7 +130,7 @@ The storage adapter automatically activates Cloudflare R2/S3 storage while keepi
 ## 5. Production Deployment Steps
 
 1. **Verify Environment**:
-   - Ensure `NODE_ENV=production`
+   - `NODE_ENV=production` is **forced by `npm start`** — you do not need to set it (see below).
    - Ensure a cryptographically random `SESSION_SECRET` (minimum 32 characters) is configured.
 2. **Build Application**:
    ```bash
@@ -135,12 +142,18 @@ The storage adapter automatically activates Cloudflare R2/S3 storage while keepi
    ```
    `npm start` runs `server/index.ts`, which serves the built SPA from `dist/` **and** every `/api/*` route from one process, applies security headers (`HSTS`, `CSP`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`), and shuts down gracefully on `SIGTERM`/`SIGINT`.
 
+   It **forces `NODE_ENV=production`**. Importing `@prisma/client` loads `.env`, which used to overwrite `NODE_ENV` and silently downgrade the server to development mode (impersonation enabled, insecure cookies, fail-fast checks skipped). Set `EXAMVAULT_ALLOW_NON_PRODUCTION=yes` if you genuinely need to run this entrypoint outside production.
+
+   > Because it sends `X-Frame-Options: DENY` / `frame-ancestors 'none'`, the production server cannot be embedded in an iframe. Use the Vite dev server for the Figma preview panel.
+
    > `npm run preview` (`vite preview`) is a **local accessibility check only**. It is not a production server: it runs a single unclustered process with no TLS and never sets `NODE_ENV=production`, so secure cookies and the production-only fail-fast checks stay disabled.
 
-   Before starting, set `NODE_ENV=production` (the production entrypoint does this by default) and confirm:
+   Before starting, confirm:
    - `SESSION_SECRET` is a real 32+ character random value (startup aborts otherwise).
    - `STORAGE_PROVIDER` is `local`, or `r2`/`s3` **with** real credentials (startup aborts otherwise).
-   - `ALLOW_ACTOR_IMPERSONATION` is unset or `"false"`.
+   - `ALLOW_ACTOR_IMPERSONATION` is `"false"` (production already disables impersonation; this is belt-and-braces).
+
+   Health check: `GET /health` (also `GET /api/health`) returns JSON with database connectivity, and responds `503` when the database is unreachable. It works on both the production server and the Vite dev server.
 
 ---
 
