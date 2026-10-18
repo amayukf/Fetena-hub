@@ -140,7 +140,7 @@ export default function PapersManager({
             quality: uploadQuality,
             status: uploadStatus,
             isFreeSample: uploadIsFreeSample,
-            pageCount: 6,
+            pageCount: Math.max(1, Math.round(file.size / 90000)),
             storageKey: uploadRes.storageKey,
             sha256: uploadRes.sha256,
             mimeType: uploadRes.mimeType,
@@ -415,7 +415,7 @@ export default function PapersManager({
                       <div>
                         <strong style={{ color: 'var(--ink)' }}>{p.title}</strong>
                         <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '2px' }}>
-                          {p.pageCount || 6} pages · {p.viewsCount || 0} views
+                          {p.pageCount || "—"} pages · {p.viewsCount || 0} views
                         </div>
                       </div>
                     </td>
