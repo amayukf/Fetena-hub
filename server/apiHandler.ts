@@ -2951,6 +2951,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         'Pragma': 'no-cache',
         'X-Content-Type-Options': 'nosniff',
         'Content-Disposition': 'inline',
+        // SECURITY: SVG is served inline from the app origin. A restrictive CSP
+        // neutralises any script/foreignObject payload that ever reaches this
+        // asset, even if generation-side escaping is bypassed.
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
       });
       res.end(Buffer.from(pageData));
       return;
