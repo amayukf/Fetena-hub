@@ -20,6 +20,22 @@ export interface PageImageResult {
 }
 
 /**
+ * Escape text before embedding it in SVG/XML markup.
+ *
+ * SECURITY: course titles and exam titles are user/admin supplied. Without this,
+ * a title containing markup (e.g. `<script>`) is written verbatim into the SVG,
+ * which is stored and later served inline — a stored-XSS vector.
+ */
+function escapeXml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+/**
  * Generates an optimized, compressed page representation (SVG/JPEG) with high legibility.
  */
 export function generateCompressedPageBuffer(
@@ -31,6 +47,9 @@ export function generateCompressedPageBuffer(
   examYearEc: number
 ): Buffer {
   // Highly legible, compressed vector page representation with authentic Woliso exam layout
+  const safeCourseCode = escapeXml(courseCode);
+  const safeCourseTitle = escapeXml(courseTitle);
+  const safeExamTitle = escapeXml(examTitle);
   const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1130" width="800" height="1130" style="background:#ffffff;font-family:system-ui,-apple-system,sans-serif;">
     <rect width="800" height="1130" fill="#ffffff"/>
     
@@ -38,8 +57,8 @@ export function generateCompressedPageBuffer(
     <rect x="40" y="40" width="720" height="140" fill="#f8faf9" stroke="#d5e2dc" rx="8"/>
     <text x="400" y="75" text-anchor="middle" font-size="18" font-weight="700" fill="#0c4a34" letter-spacing="1">AMBO UNIVERSITY — WOLISO CAMPUS</text>
     <text x="400" y="100" text-anchor="middle" font-size="13" font-weight="600" fill="#426b5c">ACADEMIC PROGRAM: FRESHMAN YEAR 1, SEMESTER 1</text>
-    <text x="400" y="125" text-anchor="middle" font-size="15" font-weight="700" fill="#1b2e27">${courseTitle} (${courseCode})</text>
-    <text x="400" y="150" text-anchor="middle" font-size="12" fill="#668277">${examTitle} · Academic Year ${examYearEc} E.C. · Page ${pageNumber} of ${totalPages}</text>
+    <text x="400" y="125" text-anchor="middle" font-size="15" font-weight="700" fill="#1b2e27">${safeCourseTitle} (${safeCourseCode})</text>
+    <text x="400" y="150" text-anchor="middle" font-size="12" fill="#668277">${safeExamTitle} · Academic Year ${escapeXml(examYearEc)} E.C. · Page ${pageNumber} of ${totalPages}</text>
     
     <!-- Watermark Pattern embedded into vector structure -->
     <g opacity="0.08" fill="#0c4a34" font-size="11" font-weight="700" transform="rotate(-25 400 565)">
@@ -60,7 +79,7 @@ export function generateCompressedPageBuffer(
       <!-- Question 1 -->
       <rect x="0" y="50" width="680" height="150" fill="#fafcfb" stroke="#e2ece7" rx="6"/>
       <text x="20" y="80" font-size="13" font-weight="600" fill="#0c4a34">Question ${((pageNumber - 1) * 3) + 1} (15 Marks)</text>
-      <text x="20" y="105" font-size="12" fill="#2d4239">Examine the foundational theoretical principles governing ${courseTitle}.</text>
+      <text x="20" y="105" font-size="12" fill="#2d4239">Examine the foundational theoretical principles governing ${safeCourseTitle}.</text>
       <text x="20" y="125" font-size="12" fill="#2d4239">Differentiate the empirical methodologies applied in contemporary university curricula.</text>
       <text x="20" y="160" font-size="11" font-style="italic" fill="#668277">Ambo University Woliso Campus Archives · Script verified by Department Board.</text>
 
