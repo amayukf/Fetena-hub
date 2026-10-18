@@ -43,7 +43,7 @@ export type Screen =
   | "semester" | "course" | "viewer" | "checkout" | "payments" | "requests"
   | "profile" | "notifications" | "help" | "admin-login" | "admin"
   | "structure" | "papers" | "contributions" | "paper-requests"
-  | "admin-payments" | "users" | "audit" | "settings" | "components" | "tokens"
+  | "admin-payments" | "users" | "audit" | "settings"
   | "terms" | "privacy" | "contact" | "forbidden" | "not-found";
 
 export type IconName =
@@ -136,8 +136,34 @@ const adminNav: Array<[Screen, IconName, string]> = [
   ["paper-requests", "bell", "Paper requests"], ["admin-payments", "card", "Payments"],
   ["users", "users", "Users & roles"], ["audit", "activity", "Audit log"],
   ["settings", "settings", "Platform settings"],
-  ["tokens", "chart", "Design tokens"],
 ];
+
+/**
+ * Single source of truth for which staff role may open which admin screen.
+ * This MUST mirror the authorization the API enforces (see server/apiHandler.ts):
+ *  - /api/settings, /api/users, /api/audit-logs  -> ADMIN only
+ *  - /api/payments                               -> ADMIN + PAYMENT_VERIFIER
+ *  - /api/papers, /api/contributions, structure  -> ADMIN + CONTENT_MANAGER
+ *  - /api/admin/overview                         -> any staff role
+ * Previously the client guards disagreed with the server, so a permitted nav
+ * link could still render a blank/erroring screen when the API returned 403.
+ */
+const ADMIN_SCREEN_ROLES: Record<string, Role[]> = {
+  admin: ["ADMIN", "CONTENT_MANAGER", "PAYMENT_VERIFIER"],
+  structure: ["ADMIN", "CONTENT_MANAGER"],
+  papers: ["ADMIN", "CONTENT_MANAGER"],
+  contributions: ["ADMIN", "CONTENT_MANAGER"],
+  "paper-requests": ["ADMIN", "CONTENT_MANAGER"],
+  "admin-payments": ["ADMIN", "PAYMENT_VERIFIER"],
+  users: ["ADMIN"],
+  audit: ["ADMIN"],
+  settings: ["ADMIN"],
+};
+
+function canAccessAdminScreen(role: Role, screen: string): boolean {
+  const allowed = ADMIN_SCREEN_ROLES[screen];
+  return Array.isArray(allowed) && allowed.includes(role);
+}
 
 function Header({
   go,
@@ -230,23 +256,16 @@ function Shell({
   onLogout?: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const isAdminScreen = ["admin","structure","papers","contributions","paper-requests","admin-payments","users","audit","settings","tokens"].includes(screen);
+  const isAdminScreen = ["admin","structure","papers","contributions","paper-requests","admin-payments","users","audit","settings"].includes(screen);
   
   const isStaff = currentUser.role !== "STUDENT";
   const isContentManager = currentUser.role === "CONTENT_MANAGER";
-  const isPaymentVerifier = currentUser.role === "PAYMENT_VERIFIER";
 
   let nav = studentNav;
   if (isAdminScreen) {
-    nav = adminNav;
-    if (isContentManager) {
-      // CONTENT_MANAGER cannot see payments or user roles
-      nav = nav.filter(([id]) => id !== "admin-payments" && id !== "users");
-    }
-    if (isPaymentVerifier) {
-      // PAYMENT_VERIFIER cannot see curriculum structure
-      nav = nav.filter(([id]) => id !== "structure");
-    }
+    // Only show nav entries this role is actually authorized to open, so a
+    // visible link can never lead to a server-side 403.
+    nav = adminNav.filter(([id]) => canAccessAdminScreen(currentUser.role, id));
   }
 
   // CONTENT_MANAGER cannot see pending payments
@@ -1577,7 +1596,16 @@ function Checkout({
   const [screenshotName, setScreenshotName] = useState("");
   const [submittedPayment, setSubmittedPayment] = useState<StorePayment | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Only allow checkout for a payment method that is actually configured.
+  // Previously the button was enabled if EITHER account existed, so a student
+  // could submit to a placeholder account for the method they selected.
+  const isMethodConfigured =
+    method === "CBE_BIRR" || method === "BANK_TRANSFER"
+      ? Boolean(settings.cbeAccountNumber?.trim())
+      : Boolean(settings.telebirrPhone?.trim());
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1598,6 +1626,10 @@ function Checkout({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isMethodConfigured) {
+      setError("This payment method is not configured yet. Please choose another method or contact campus staff.");
+      return;
+    }
     if (!txId.trim() || txId.trim().length < 4) {
       setError("Please enter a valid transaction reference ID (e.g. TB4F8K92 or CBE778942).");
       return;
@@ -1607,6 +1639,7 @@ function Checkout({
       return;
     }
     setError(null);
+    setSubmitting(true);
     try {
       const newPay = await onSubmitPayment({
         method,
@@ -1616,6 +1649,8 @@ function Checkout({
       setSubmittedPayment(newPay);
     } catch (err: any) {
       setError(err.message || "Payment submission failed");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -1760,13 +1795,13 @@ function Checkout({
 
           <Card style={{ marginTop: "16px" }}>
             <Heading level={2}>2. Payment instructions</Heading>
-            {!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim() && (
+            {!isMethodConfigured && (
               <div className="alert warning" style={{ marginBottom: "14px", background: "#fffbeb", border: "1px solid #f59e0b", color: "#b45309" }}>
                 <Icon name="shield" size={20}/>
                 <span>
-                  <strong>Checkout Blocked — Payment Accounts Not Yet Configured:</strong>
+                  <strong>Checkout Blocked — Selected Payment Method Not Configured:</strong>
                   <p style={{ margin: "4px 0 0", fontSize: "0.85rem" }}>
-                    The campus administration has not set up active Telebirr or CBE account numbers in Platform Settings. Manual payment submission is temporarily blocked until account details are filled by an administrator.
+                    The campus administration has not set up an active {method.replace("_", " ")} account in Platform Settings. Choose a configured method or ask an administrator to add the account details.
                   </p>
                 </span>
               </div>
@@ -1802,14 +1837,14 @@ function Checkout({
               placeholder="e.g. TB4F8K92 or CBE778942"
               value={txId}
               onChange={e => setTxId(e.target.value)}
-              disabled={!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()}
+              disabled={!isMethodConfigured}
             />
 
             <div
               className="upload-box"
               style={{
-                cursor: (!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()) ? "not-allowed" : "pointer",
-                opacity: (!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()) ? 0.6 : 1,
+                cursor: !isMethodConfigured ? "not-allowed" : "pointer",
+                opacity: !isMethodConfigured ? 0.6 : 1,
                 border: screenshotUrl ? "2px solid var(--primary)" : undefined,
                 background: screenshotUrl ? "rgba(12, 74, 52, 0.04)" : undefined,
               }}
@@ -1823,7 +1858,7 @@ function Checkout({
                 style={{ display: "none" }}
                 accept="image/png,image/jpeg"
                 onChange={handleFileChange}
-                disabled={!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()}
+                disabled={!isMethodConfigured}
               />
               <Icon name="image" size={32}/>
               <strong>Upload payment receipt screenshot</strong>
@@ -1853,10 +1888,14 @@ function Checkout({
             <Button
               type="submit"
               className="full"
-              disabled={!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()}
-              title={(!settings.telebirrPhone?.trim() && !settings.cbeAccountNumber?.trim()) ? "Checkout blocked until payment accounts are set in settings" : undefined}
+              disabled={!isMethodConfigured || submitting}
+              title={!isMethodConfigured ? "Checkout blocked until payment accounts are set in settings" : undefined}
             >
-              {rejectedPayment ? `Resubmit for verification (Attempt #${(rejectedPayment.resubmitCount || 0) + 1})` : "Submit for verification"}
+              {submitting
+                ? "Submitting payment…"
+                : rejectedPayment
+                ? `Resubmit for verification (Attempt #${(rejectedPayment.resubmitCount || 0) + 1})`
+                : "Submit for verification"}
             </Button>
           </Card>
         </form>
@@ -1905,11 +1944,11 @@ function Payments({ payments, settings, go }: { payments: StorePayment[]; settin
     <div className="stats-row">
       <Card>
         <span className="stat-icon"><Icon name="card"/></span>
-        <div><small>Total paid</small><strong>{payments.filter(p => p.status === "APPROVED").length * 50} ETB</strong></div>
+        <div><small>Total paid</small><strong>{payments.filter(p => p.status === "APPROVED").reduce((sum, p) => sum + (p.amountEtb || 0), 0).toLocaleString()} ETB</strong></div>
       </Card>
       <Card>
         <span className="stat-icon"><Icon name="check"/></span>
-        <div><small>Semesters unlocked</small><strong>{payments.filter(p => p.status === "APPROVED").length}</strong></div>
+        <div><small>Semesters unlocked</small><strong>{new Set(payments.filter(p => p.status === "APPROVED").map(p => p.programTermId)).size}</strong></div>
       </Card>
       <Card>
         <span className="stat-icon"><Icon name="clock"/></span>
@@ -2142,6 +2181,10 @@ function Requests({
     }
     if (!payoutAccount.trim()) {
       setError("Please provide your Telebirr or CBE account number to receive your payout.");
+      return;
+    }
+    if (!attachedBase64) {
+      setError("Please attach the exam paper file (PDF, JPG, or PNG) before submitting.");
       return;
     }
     setError(null);
@@ -3308,20 +3351,26 @@ export default function App() {
         setWantedPapers(mappedWanted);
       }
 
-      // Only update unlockedSemesters from the current user's own active entitlements
-      // (server entitlements are the single source of truth for access unlock)
+      // Only update unlockedSemesters from the current user's own active
+      // entitlements (server entitlements are the single source of truth).
+      // SECURITY: fail closed — if we cannot identify the current user, we must
+      // NOT treat every entitlement in the payload as the caller's own.
       const myUserId = currentUserRef.current?.userId || (currentUserRef.current as any)?.id || null;
       if (data.entitlements) {
         const unlocked = new Set<string>();
-        data.entitlements.forEach((e: any) => {
-          // Only add if this entitlement belongs to the current user and is active
-          if ((!myUserId || e.userId === myUserId) && e.isActive !== false) {
+        if (myUserId) {
+          data.entitlements.forEach((e: any) => {
+            if (e.userId !== myUserId || e.isActive === false) return;
             unlocked.add(e.programTermId);
+            // Only alias onto the freshman Y1S1 key when this entitlement really
+            // is for that term, so a future Year-2 term cannot unlock Y1S1.
+            const isY1S1 =
+              e.programTerm?.term?.yearNumber === 1 && e.programTerm?.term?.semesterNumber === 1;
             const pCode = e.programTerm?.program?.code;
-            if (pCode === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
-            if (pCode === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
-          }
-        });
+            if (isY1S1 && pCode === "NAT_SCI") unlocked.add("pt-nat-sci-y1s1");
+            if (isY1S1 && pCode === "SOC_SCI") unlocked.add("pt-soc-sci-y1s1");
+          });
+        }
         setUnlockedSemesters(unlocked);
       }
     } catch (err) {
@@ -3380,7 +3429,7 @@ export default function App() {
             const saved = localStorage.getItem("ev_current_screen") as Screen | null;
             const adminScreens: Screen[] = [
               "admin", "structure", "papers", "contributions", "paper-requests",
-              "admin-payments", "users", "audit", "settings", "tokens"
+              "admin-payments", "users", "audit", "settings"
             ];
             const studentScreens: Screen[] = [
               "dashboard", "browse", "semester", "course", "viewer",
@@ -3877,30 +3926,18 @@ export default function App() {
     );
   }
 
-  // Role separation guards
-  const adminScreens = ["admin","structure","papers","contributions","paper-requests","admin-payments","users","audit","settings","tokens"];
+  // Role separation guards — driven by the same table the nav and the API use.
+  const adminScreens = ["admin","structure","papers","contributions","paper-requests","admin-payments","users","audit","settings"];
   if (currentUser.role === "STUDENT" && adminScreens.includes(screen)) {
     return <ForbiddenPage go={go}/>;
   }
 
-  if (currentUser.role === "CONTENT_MANAGER" && (screen === "admin-payments" || screen === "users")) {
+  if (adminScreens.includes(screen) && !canAccessAdminScreen(currentUser.role, screen)) {
     return (
       <Shell screen={screen} go={go} currentUser={currentUser} onLogout={handleLogout}>
         <AccessDenied
-          title="Access Restricted for Content Managers"
-          message="Content Managers do not have permissions to view student payments or administrative user roles."
-          onGoBack={() => go("admin")}
-        />
-      </Shell>
-    );
-  }
-
-  if (currentUser.role === "PAYMENT_VERIFIER" && (screen === "structure" || screen === "papers")) {
-    return (
-      <Shell screen={screen} go={go} currentUser={currentUser} onLogout={handleLogout}>
-        <AccessDenied
-          title="Access Restricted for Payment Verifiers"
-          message="Payment Verifiers do not have permission to view or modify freshman curriculum structure or exam papers."
+          title={`Access Restricted for ${currentUser.role.replace("_", " ")}`}
+          message={`Your role (${currentUser.role.replace("_", " ")}) is not authorized to open this section. Ask an administrator if you need access.`}
           onGoBack={() => go("admin")}
         />
       </Shell>
@@ -4034,8 +4071,7 @@ export default function App() {
     screen === "settings" ? (
       <SettingsManager settings={settings} currentUser={currentUser} onSaveSettings={handleSaveSettings} />
     ) :
-    screen === "components" ? <NotFoundPage go={go}/> :
-    <TokensPage/>;
+    <NotFoundPage go={go}/>;
 
   return (
     <>
