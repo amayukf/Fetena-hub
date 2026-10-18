@@ -67,7 +67,7 @@ describe('STEP 10: Complete Admin Side Backend & Role Separation', () => {
 
     // Setup Campus & Stream
     const campus = await prisma.campus.create({
-      data: { code: 'WOLISO', name: 'Ambo University - Woliso Campus' },
+      data: { code: 'WOLISO', name: 'Ambo University' },
     });
 
     const program = await prisma.program.create({

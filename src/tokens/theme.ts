@@ -87,7 +87,7 @@ export const theme = {
     appName: 'ExamVault',
     tagline: 'Prepare smarter with past exam papers.',
     university: 'Ambo University',
-    campus: 'Woliso Campus',
+    campus: 'Ambo University',
     defaultSemesterFeeEtb: 50,
   },
 } as const;

@@ -42,7 +42,7 @@ export default function CoverageMatrix({
         <div>
           <Heading level={2}>Freshman Curriculum Coverage Matrix</Heading>
           <p style={{ margin: '4px 0 0 0' }}>
-            All 11 courses across Mid, Final, and Quiz exams for Woliso Campus freshman curriculum.
+            All 11 courses across Mid, Final, and Quiz exams for Ambo University freshman curriculum.
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>

@@ -10,16 +10,21 @@ import {
   detectFileSignature,
   validateUploadFile,
   generateRandomStorageKey,
-  signStreamTicket,
+  computeSha256,
   verifyStreamTicket,
 } from '../src/lib/storage';
 import { dispatchNotification } from '../src/lib/notifications';
 import { estimatePageCount } from '../src/lib/pageCount';
+import {
+  applyWatermarkToPage,
+  getDocumentPageCount,
+  renderDocumentPage,
+} from '../src/lib/serverPageRenderer';
 import type { StreamCode } from '../src/types';
 
 // -------------------------------------------------------------
 // SECURITY: SESSION_SECRET is mandatory in EVERY environment.
-// It signs stream tickets and signed storage-view URLs, so a missing,
+// It signs private storage-view URLs, so a missing,
 // short, or well-known placeholder value must abort startup rather than
 // silently fall back to a hard-coded secret that is published in source.
 // -------------------------------------------------------------
@@ -45,6 +50,18 @@ export const prisma = new PrismaClient();
 
 function sha256(data: string | Buffer): string {
   return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+function decodeBase64File(value: unknown): Buffer | null {
+  if (typeof value !== 'string' || !value || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    return null;
+  }
+  const data = Buffer.from(value, 'base64');
+  return data.length > 0 && data.toString('base64') === value ? data : null;
+}
+
+function isOwnedUploadKey(key: unknown, userId: string): key is string {
+  return typeof key === 'string' && key.startsWith(`quarantine/uploads/${userId}/`);
 }
 
 export function parseCookies(req: IncomingMessage): Record<string, string> {
@@ -114,7 +131,7 @@ export async function checkRateLimit(
 }
 
 /** Maximum accepted request body size (25 MB). */
-const MAX_BODY_BYTES = 25 * 1024 * 1024;
+const MAX_BODY_BYTES = 35 * 1024 * 1024;
 
 /**
  * Attach the body reader to a request exactly once and cache the result on
@@ -375,9 +392,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       }
 
       // Link stream program
-      const program = await prisma.program.findFirst({
-        where: { code: streamCode, campus: { code: 'WOLISO' } },
-      });
+      const program = (await prisma.program.findFirst({
+        where: { code: streamCode, campus: { code: { in: ['AMBO', 'WOLISO'] } } },
+      })) ?? (await prisma.program.findFirst({
+        where: { code: streamCode },
+      }));
 
       const passwordHash = await bcrypt.hash(password, 10);
       const user = await prisma.user.create({
@@ -743,9 +762,9 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         wantedPapers,
       ] = await Promise.all([
         prisma.systemSetting.findMany({ orderBy: { key: 'asc' } }),
-        prisma.campus.findFirst({ where: { code: 'WOLISO' } }),
+        (await prisma.campus.findFirst({ where: { code: { in: ['AMBO', 'WOLISO'] } } })) || (await prisma.campus.findFirst()),
         prisma.program.findMany({
-          where: { campus: { code: 'WOLISO' } },
+          where: { campus: { code: { in: ['AMBO', 'WOLISO'] } } },
           include: {
             programTerms: {
               include: { term: true },
@@ -1048,12 +1067,20 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       if (!actor || !actor.user) {
         return sendError(res, 401, 'Authentication required to submit payments.');
       }
+      if (actor.role !== Role.STUDENT) {
+        return sendError(res, 403, 'Only students can submit semester payments.');
+      }
       const userId = actor.id;
 
       // Resolve programTermId
       let targetProgramTermId = programTermId;
       if (!targetProgramTermId) {
-        const streamCode = rawBody.stream || 'NAT_SCI';
+        const streamCode = actor.user.programId
+          ? (await prisma.program.findUnique({ where: { id: actor.user.programId } }))?.code
+          : null;
+        if (!streamCode) {
+          return sendError(res, 400, 'Your student account must be assigned to a program before making a payment.');
+        }
         const pt = await prisma.programTerm.findFirst({
           where: {
             program: { code: streamCode },
@@ -1073,6 +1100,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       });
       if (!pt) {
         return sendError(res, 404, 'ProgramTerm not found');
+      }
+      if (pt.programId !== actor.user.programId) {
+        return sendError(res, 403, 'You can only purchase a semester pass for your assigned program.');
+      }
+      if (!pt.isPurchasable) {
+        return sendError(res, 400, 'This semester is not currently available for purchase.');
       }
 
       // Server computes amount strictly from the database!
@@ -1124,26 +1157,46 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         parsed.data.storageKey ||
         parsed.data.receiptImageStorageKey ||
         screenshotUrl;
-
-      let randomScreenshotKey = generateRandomStorageKey('quarantine', 'jpg', 'receipts');
-      let screenshotSha256 = sha256(`receipt:${userId}:${paymentMethod}:${transactionId}`);
-
-      if (providedReceiptKey) {
-        // Only keys inside the server-managed quarantine namespace are accepted;
-        // a client can never point a payment at an arbitrary stored object.
-        if (!providedReceiptKey.startsWith('quarantine/')) {
-          return sendError(res, 400, 'Invalid receipt reference. Upload the receipt through the platform before submitting.');
-        }
-        randomScreenshotKey = providedReceiptKey;
-
-        // Prefer hashing the stored bytes so duplicate-receipt detection cannot
-        // be poisoned with a client-supplied hash. If the object is not readable
-        // from this process, fall back to a deterministic hash of the key.
-        const receiptBytes = await storage.download(providedReceiptKey).catch(() => null);
-        screenshotSha256 = receiptBytes
-          ? sha256(Buffer.from(receiptBytes))
-          : sha256(`receipt-key:${providedReceiptKey}`);
+      const screenshotBase64 = parsed.data.screenshotBase64;
+      const decodedReceipt = screenshotBase64 ? decodeBase64File(screenshotBase64) : null;
+      if (screenshotBase64 && !decodedReceipt) {
+        return sendError(res, 400, 'Receipt image data is not valid base64.');
       }
+      if (!decodedReceipt && !isOwnedUploadKey(providedReceiptKey, userId)) {
+        return sendError(res, 400, 'Upload your receipt through this account before submitting payment.');
+      }
+
+      let receiptBytes: Buffer;
+      let screenshotKey: string;
+      if (decodedReceipt) {
+        receiptBytes = decodedReceipt;
+        const setting = await prisma.systemSetting.findUnique({ where: { key: 'MAX_SCREENSHOT_SIZE_MB' } });
+        const maxMb = setting ? Number(setting.value) || 5 : 5;
+        const validation = validateUploadFile(receiptBytes, '', maxMb);
+        if (!validation.valid || !validation.detectedMime) {
+          return sendError(res, 400, validation.error || 'Invalid payment receipt file.');
+        }
+        screenshotKey = generateRandomStorageKey(
+          'quarantine',
+          validation.detectedExt || 'jpg',
+          `uploads/${userId}`
+        );
+        await storage.upload(screenshotKey, receiptBytes, validation.detectedMime);
+      } else {
+        screenshotKey = providedReceiptKey;
+        const receipt = await storage.download(screenshotKey);
+        if (!receipt) {
+          return sendError(res, 400, 'Uploaded receipt is missing from private storage. Upload it again.');
+        }
+        receiptBytes = Buffer.from(receipt);
+        const setting = await prisma.systemSetting.findUnique({ where: { key: 'MAX_SCREENSHOT_SIZE_MB' } });
+        const maxMb = setting ? Number(setting.value) || 5 : 5;
+        const validation = validateUploadFile(receiptBytes, '', maxMb);
+        if (!validation.valid) {
+          return sendError(res, 400, validation.error || 'Invalid payment receipt file.');
+        }
+      }
+      const screenshotSha256 = sha256(receiptBytes);
 
       // Check if student is resubmitting for an existing REJECTED payment
       const existingRejected = await prisma.payment.findFirst({
@@ -1162,7 +1215,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           data: {
             paymentMethod,
             transactionId,
-            screenshotKey: randomScreenshotKey,
+            screenshotKey,
             screenshotSha256,
             amountEtb: serverAmountEtb, // Server calculated
             status: PaymentStatus.PENDING,
@@ -1224,7 +1277,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           amountEtb: serverAmountEtb, // Server computed from database
           paymentMethod,
           transactionId,
-          screenshotKey: randomScreenshotKey,
+          screenshotKey,
           screenshotSha256,
           resubmitCount: 0,
           status: PaymentStatus.PENDING,
@@ -1631,6 +1684,9 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       if (!actor || !actor.user) {
         return sendError(res, 401, 'Student authentication required to submit exam papers');
       }
+      if (actor.role !== Role.STUDENT) {
+        return sendError(res, 403, 'Only students can submit exam-paper contributions.');
+      }
       const studentId = actor.id;
 
       // Check student permission & canSell status
@@ -1658,7 +1714,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         );
       }
 
-      // SERVER VALIDATION 2: Only the 11 courses approved for Woliso Campus
+      // SERVER VALIDATION 2: Only the 11 courses approved for Ambo University
       let course = await prisma.course.findUnique({ where: { id: courseId } });
       if (!course) {
         const cleanCode = (rawBody.courseCode || courseId.replace(/^course-/, ''))
@@ -1688,9 +1744,9 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
 
       const verifiedDeclarationText =
         declarationText ||
-        '1. I affirm under academic honor code that I personally sat for or received this original exam paper at Ambo University Woliso Campus.\n' +
+        '1. I affirm under academic honor code that I personally sat for or received this original exam paper at Ambo University.\n' +
         '2. I certify that this exam paper has already been administered and does not contain confidential or unreleased upcoming exam material.\n' +
-        '3. I transfer non-exclusive archival publication rights to ExamVault Woliso archive in exchange for the agreed buyout payout.';
+        '3. I transfer non-exclusive archival publication rights to ExamVault Ambo University archive in exchange for the agreed buyout payout.';
 
       // SERVER VALIDATION 4: Daily limit (5/day) and Weekly limit (15/week)
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -1709,9 +1765,28 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 429, 'Weekly submission limit reached (maximum 15 contributions per 7 days).');
       }
 
-      // Compute sha256 and enforce duplicate check
-      const fileName = rawBody.fileName || `${examType}_${academicYear}_paper.pdf`;
-      const fileSha256 = rawBody.sha256 || sha256(`file-${courseId}-${examDate}-${academicYear}-${fileName}`);
+      const fileName = typeof rawBody.fileName === 'string' && rawBody.fileName.trim()
+        ? rawBody.fileName.trim()
+        : `${examType}_${academicYear}_paper`;
+      const fileBase64 = rawBody.fileBase64;
+      const fileBytesFromBase64 = fileBase64 ? decodeBase64File(fileBase64) : null;
+      if (fileBase64 && !fileBytesFromBase64) {
+        return sendError(res, 400, 'Contribution file data is not valid base64.');
+      }
+      const uploadedKey = rawBody.storageKey;
+      if (!fileBytesFromBase64 && !isOwnedUploadKey(uploadedKey, studentId)) {
+        return sendError(res, 400, 'Upload your exam paper through this account before submitting the contribution.');
+      }
+      const fileBytes = fileBytesFromBase64 || await storage.download(uploadedKey);
+      if (!fileBytes) {
+        return sendError(res, 400, 'Uploaded exam paper is missing from private storage. Upload it again.');
+      }
+      const fileValidation = validateUploadFile(fileBytes, '', 20);
+      if (!fileValidation.valid || !fileValidation.detectedMime || !fileValidation.detectedExt) {
+        return sendError(res, 400, fileValidation.error || 'Invalid contribution file.');
+      }
+      await getDocumentPageCount(fileBytes);
+      const fileSha256 = sha256(Buffer.from(fileBytes));
 
       // Auto-reject exact duplicates already in published library
       const existingPaper = await prisma.examPaper.findFirst({
@@ -1729,24 +1804,15 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 409, 'This exact paper file is already undergoing review in the admin verification queue.');
       }
 
-      // SECURITY: a client may only reference a file the server itself wrote
-      // into the private quarantine namespace. Any other key (e.g. a
-      // "published/..." paper key) is ignored and a fresh server-generated key
-      // is used, preventing cross-object references and paywall bypass.
-      let randomQuarantineKey = generateRandomStorageKey('quarantine', 'pdf');
-      if (rawBody.storageKey && rawBody.storageKey.startsWith('quarantine/')) {
-        const keyExists = await storage.exists(rawBody.storageKey).catch(() => false);
-        if (keyExists) randomQuarantineKey = rawBody.storageKey;
-      }
-
-      // If file binary provided in base64, save to quarantine storage
-      if (rawBody.fileBase64) {
-        const buf = Buffer.from(rawBody.fileBase64, 'base64');
-        const sig = detectFileSignature(buf);
-        if (!sig.valid || !sig.detectedMime) {
-          return sendError(res, 400, sig.error || 'Invalid file format. Authentic PDF, JPG, or PNG required.');
-        }
-        await storage.upload(randomQuarantineKey, buf, sig.detectedMime);
+      const randomQuarantineKey = fileBytesFromBase64
+        ? generateRandomStorageKey(
+            'quarantine',
+            fileValidation.detectedExt,
+            `uploads/${studentId}`
+          )
+        : uploadedKey;
+      if (fileBytesFromBase64) {
+        await storage.upload(randomQuarantineKey, fileBytesFromBase64, fileValidation.detectedMime);
       }
 
       const contribution = await prisma.$transaction(async (tx) => {
@@ -1776,8 +1842,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             contributionId: c.id,
             storageKey: randomQuarantineKey,
             sha256: fileSha256,
-            mimeType: 'application/pdf',
-            sizeBytes: rawBody.fileSizeBytes || 2400000,
+            mimeType: fileValidation.detectedMime || 'application/pdf',
+            sizeBytes: fileBytes.byteLength,
             pageOrder: 1,
           },
         });
@@ -1862,16 +1928,36 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       if (!contrib) {
         return sendError(res, 404, 'Contribution not found');
       }
+      if (
+        !(
+          [
+            ContributionStatus.SUBMITTED,
+            ContributionStatus.IN_REVIEW,
+            ContributionStatus.CHANGES_REQUESTED,
+            ContributionStatus.OFFER_MADE,
+          ] as ContributionStatus[]
+        ).includes(contrib.status)
+      ) {
+        return sendError(res, 409, 'This contribution is no longer eligible for review.');
+      }
 
       let newStatus: ContributionStatus = contrib.status;
       let finalApprovedAmount = contrib.approvedPayoutEtb;
 
       if (action === 'APPROVE') {
         newStatus = ContributionStatus.ACCEPTED;
-        finalApprovedAmount = new Prisma.Decimal(Number(approvedPayoutEtb || contrib.proposedPayoutEtb || 100));
+        const amount = Number(approvedPayoutEtb ?? contrib.proposedPayoutEtb ?? 100);
+        if (!Number.isFinite(amount) || amount <= 0 || amount > 1000) {
+          return sendError(res, 400, 'Approved payout must be greater than 0 and no more than 1000 ETB.');
+        }
+        finalApprovedAmount = new Prisma.Decimal(amount);
       } else if (action === 'COUNTER_OFFER') {
         newStatus = ContributionStatus.OFFER_MADE;
-        finalApprovedAmount = new Prisma.Decimal(Number(counterOfferEtb || 80));
+        const amount = Number(counterOfferEtb ?? 80);
+        if (!Number.isFinite(amount) || amount <= 0 || amount > 1000) {
+          return sendError(res, 400, 'Counter-offer must be greater than 0 and no more than 1000 ETB.');
+        }
+        finalApprovedAmount = new Prisma.Decimal(amount);
       } else if (action === 'REQUEST_BETTER_SCAN') {
         newStatus = ContributionStatus.CHANGES_REQUESTED;
       } else if (action === 'REJECT') {
@@ -1955,20 +2041,14 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       if (!contrib) {
         return sendError(res, 404, 'Contribution not found');
       }
+      if (contrib.status !== ContributionStatus.ACCEPTED || contrib.examPaperId) {
+        return sendError(res, 409, 'Only an accepted, unpublished contribution can be published.');
+      }
 
-      const file = contrib.files[0] || {
-        storageKey: `quarantine/${contrib.id}.pdf`,
-        sha256: sha256(`contrib-${contrib.id}`),
-        mimeType: 'application/pdf',
-        sizeBytes: 2500000,
-      };
-
-      // Real storage promotion: copy from quarantine/ to published/
-      const publishedKey = generateRandomStorageKey(
-        'published',
-        'pdf',
-        contrib.course.code.replace(/\s+/g, '')
-      );
+      const file = contrib.files[0];
+      if (!file) {
+        return sendError(res, 400, 'Cannot publish contribution: no uploaded paper file is associated with this submission.');
+      }
 
       const quarantineData = await storage.download(file.storageKey);
       if (!quarantineData) {
@@ -1978,7 +2058,18 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           'Cannot approve contribution: the uploaded exam paper file is missing from quarantine storage.'
         );
       }
-      await storage.upload(publishedKey, quarantineData, file.mimeType);
+      const signature = detectFileSignature(quarantineData);
+      if (!signature.valid || !signature.detectedMime || !signature.detectedExt) {
+        return sendError(res, 400, 'Cannot publish contribution: the stored paper file is invalid.');
+      }
+      const pageCount = await getDocumentPageCount(quarantineData);
+      const contentHash = sha256(Buffer.from(quarantineData));
+      const publishedKey = generateRandomStorageKey(
+        'published',
+        signature.detectedExt,
+        contrib.course.code.replace(/\s+/g, '')
+      );
+      await storage.upload(publishedKey, quarantineData, signature.detectedMime);
 
       const result = await prisma.$transaction(async (tx) => {
         // Create published ExamPaper with unique link to contribution
@@ -1989,11 +2080,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             examType: contrib.examType,
             examYearEc: contrib.academicYearEc,
             quality: ScanQuality.EXCELLENT,
-            pageCount: estimatePageCount(file.sizeBytes),
+            pageCount,
             storageKey: publishedKey,
-            sha256: file.sha256,
-            mimeType: file.mimeType,
-            fileSizeBytes: file.sizeBytes,
+            sha256: contentHash,
+            mimeType: signature.detectedMime,
+            fileSizeBytes: quarantineData.byteLength,
             isFreeSample: false,
             status: PaperStatus.PUBLISHED,
             uploadedById: contrib.studentId,
@@ -2018,7 +2109,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           data: {
             userId: contrib.studentId,
             title: 'Exam Paper Published!',
-            message: `Your ${contrib.course.code} exam paper has been officially published to the Woliso Campus archive! Your payout is in the payout queue.`,
+            message: `Your ${contrib.course.code} exam paper has been officially published to the Ambo University archive! Your payout is in the payout queue.`,
             type: 'SUCCESS',
           },
         });
@@ -2058,8 +2149,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 403, 'Content managers and unauthorized users are not authorized to disburse payouts.');
       }
 
-      const payoutTxId = body.payoutTxId?.trim();
-      if (!payoutTxId) {
+      const payoutTxId = typeof body.payoutTxId === 'string' ? body.payoutTxId.trim() : '';
+      if (!/^[A-Za-z0-9_-]{4,80}$/.test(payoutTxId)) {
         return sendError(res, 400, 'Unique payout transfer reference (payoutTxId) is required.');
       }
 
@@ -2080,23 +2171,36 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 404, 'Contribution not found');
       }
 
-      if (contrib.status === ContributionStatus.PAID) {
-        return sendError(res, 409, 'This contribution has already been paid out.');
+      if (contrib.status !== ContributionStatus.PUBLISHED || !contrib.examPaperId) {
+        return sendError(res, 409, 'A contribution must be published before its payout can be recorded.');
       }
 
-      // Sole amount used for payout is approvedPayoutEtb! Client cannot change it.
-      const settleAmount = Number(contrib.approvedPayoutEtb || contrib.proposedPayoutEtb || 100);
+      const settleAmount = Number(contrib.approvedPayoutEtb);
+      if (!Number.isFinite(settleAmount) || settleAmount <= 0) {
+        return sendError(res, 409, 'This contribution has no approved payout amount.');
+      }
 
       const paidContrib = await prisma.$transaction(async (tx) => {
-        const updated = await tx.paperContribution.update({
-          where: { id: contribId },
+        const updatedCount = await tx.paperContribution.updateMany({
+          where: {
+            id: contribId,
+            status: ContributionStatus.PUBLISHED,
+            examPaperId: contrib.examPaperId,
+            payoutTxId: null,
+          },
           data: {
             status: ContributionStatus.PAID,
             payoutTxId,
             approvedPayoutEtb: settleAmount,
           },
+        });
+        if (updatedCount.count !== 1) return null;
+
+        const updated = await tx.paperContribution.findUnique({
+          where: { id: contribId },
           include: { course: true },
         });
+        if (!updated) throw new Error('Paid contribution could not be loaded after settlement.');
 
         await tx.notification.create({
           data: {
@@ -2126,11 +2230,14 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return updated;
       });
 
+      if (!paidContrib) {
+        return sendError(res, 409, 'This contribution has already been paid or changed. Refresh and try again.');
+      }
       return sendJson(res, 200, paidContrib);
     }
 
     // -------------------------------------------------------------
-    // POST /api/contributions/:id/approve - Legacy/Direct Buyout Approval (Sets ACCEPTED & links paper)
+    // POST /api/contributions/:id/approve - Legacy/Direct Approval and Publication
     // -------------------------------------------------------------
     if (pathname.startsWith('/api/contributions/') && pathname.endsWith('/approve') && method === 'POST') {
       const parts = pathname.split('/');
@@ -2141,8 +2248,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 403, 'Permission denied: Only administrators and content managers can approve contributions.');
       }
       const reviewerId = actor.id;
-      const approvedPayoutEtb = Number(body.approvedPayoutEtb) || 100.00;
-      const payoutTxId = body.payoutTxId || `TB_PAYOUT_${Math.floor(1000 + Math.random() * 9000)}`;
+      const approvedPayoutEtb = Number(body.approvedPayoutEtb);
+      if (!Number.isFinite(approvedPayoutEtb) || approvedPayoutEtb <= 0 || approvedPayoutEtb > 1000) {
+        return sendError(res, 400, 'Approved payout must be greater than 0 and no more than 1000 ETB.');
+      }
 
       const contrib = await prisma.paperContribution.findUnique({
         where: { id: contribId },
@@ -2156,6 +2265,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       if (!contrib) {
         return sendError(res, 404, 'Contribution not found');
       }
+      if (
+        !([ContributionStatus.SUBMITTED, ContributionStatus.IN_REVIEW, ContributionStatus.OFFER_MADE, ContributionStatus.CHANGES_REQUESTED] as ContributionStatus[]).includes(contrib.status) ||
+        contrib.examPaperId
+      ) {
+        return sendError(res, 409, 'This contribution is no longer eligible for direct approval and publication.');
+      }
 
       if (!contrib.files || contrib.files.length === 0) {
         return sendError(res, 400, 'Cannot approve contribution: no uploaded paper files associated with this submission.');
@@ -2167,11 +2282,18 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 400, 'Cannot approve contribution: the uploaded exam paper file is missing from quarantine storage.');
       }
 
-      const publishedKey = file.storageKey.startsWith('quarantine/')
-        ? file.storageKey.replace('quarantine/', 'published/')
-        : `published/${file.storageKey}`;
-
-      await storage.upload(publishedKey, quarantineData, file.mimeType);
+      const signature = detectFileSignature(quarantineData);
+      if (!signature.valid || !signature.detectedMime || !signature.detectedExt) {
+        return sendError(res, 400, 'Cannot publish contribution: the stored paper file is invalid.');
+      }
+      const pageCount = await getDocumentPageCount(quarantineData);
+      const contentHash = sha256(Buffer.from(quarantineData));
+      const publishedKey = generateRandomStorageKey(
+        'published',
+        signature.detectedExt,
+        contrib.course.code.replace(/\s+/g, '')
+      );
+      await storage.upload(publishedKey, quarantineData, signature.detectedMime);
 
       const result = await prisma.$transaction(async (tx) => {
         // Create Published ExamPaper
@@ -2182,11 +2304,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             examType: contrib.examType,
             examYearEc: contrib.academicYearEc,
             quality: ScanQuality.EXCELLENT,
-            pageCount: estimatePageCount(file.sizeBytes),
+            pageCount,
             storageKey: publishedKey,
-            sha256: file.sha256,
-            mimeType: file.mimeType,
-            fileSizeBytes: file.sizeBytes,
+            sha256: contentHash,
+            mimeType: signature.detectedMime,
+            fileSizeBytes: quarantineData.byteLength,
             isFreeSample: false,
             status: PaperStatus.PUBLISHED,
             uploadedById: contrib.studentId,
@@ -2194,13 +2316,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           },
         });
 
-        // Update Contribution to ACCEPTED and link paper
+        // The file is already live in the archive, but payment remains pending.
         const updatedContrib = await tx.paperContribution.update({
           where: { id: contribId },
           data: {
-            status: ContributionStatus.ACCEPTED,
+            status: ContributionStatus.PUBLISHED,
             approvedPayoutEtb,
-            payoutTxId,
             reviewedById: reviewerId || null,
             reviewedAt: new Date(),
             examPaperId: examPaper.id,
@@ -2215,8 +2336,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         await tx.notification.create({
           data: {
             userId: contrib.studentId,
-            title: 'Exam paper payout approved!',
-            message: `Your ${contrib.course.code} exam submission was accepted. Payout of ${approvedPayoutEtb} ETB was issued to your account (Ref: ${payoutTxId}).`,
+            title: 'Exam paper published',
+            message: `Your ${contrib.course.code} exam submission was published. The approved payout of ${approvedPayoutEtb} ETB is pending transfer.`,
             type: 'SUCCESS',
           },
         });
@@ -2224,14 +2345,13 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         // Audit Log
         await tx.auditLog.create({
           data: {
-            action: 'Student paper buyout settled & published',
+            action: 'Student paper buyout approved and published; payout pending',
             entityType: 'PaperContribution',
             entityId: contrib.id,
             actorId: reviewerId || null,
             riskLevel: AuditRiskLevel.MEDIUM,
             details: {
               approvedPayoutEtb,
-              payoutTxId,
               publishedPaperId: examPaper.id,
               courseCode: contrib.course.code,
             },
@@ -2475,20 +2595,30 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     if (pathname === '/api/upload' && method === 'POST') {
       const body = await parseBody(req);
       const { fileBase64, reportedMime, category } = body;
-
-      if (!fileBase64) {
-        return sendError(res, 400, 'File content (fileBase64) is required.');
-      }
-
-      const buf = Buffer.from(fileBase64, 'base64');
-      const signature = detectFileSignature(buf);
-      if (!signature.valid || !signature.detectedMime) {
-        return sendError(res, 400, signature.error || 'Invalid file format. Only authentic PDF, JPG, and PNG files are accepted.');
-      }
-
       const actor = await resolveActor(req);
       if (!actor || !actor.user) {
         return sendError(res, 401, 'Authentication required to upload files.');
+      }
+      const uploadCategory = category || 'paper';
+      if (!['paper', 'screenshot', 'contribution'].includes(uploadCategory)) {
+        return sendError(res, 400, 'Invalid upload category.');
+      }
+      const isPaperUpload = uploadCategory === 'paper';
+      const canUpload = isPaperUpload
+        ? actor.role === Role.ADMIN || actor.role === Role.CONTENT_MANAGER
+        : actor.role === Role.STUDENT;
+      if (!canUpload) {
+        return sendError(res, 403, isPaperUpload
+          ? 'Only administrators and content managers can upload archive papers.'
+          : 'Only students can upload receipts and contribution files.');
+      }
+      if (typeof fileBase64 !== 'string' || !fileBase64) {
+        return sendError(res, 400, 'File content (fileBase64) is required.');
+      }
+
+      const buf = decodeBase64File(fileBase64);
+      if (!buf) {
+        return sendError(res, 400, 'File content is not valid base64.');
       }
 
       const ip = getClientIp(req);
@@ -2498,24 +2628,24 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       }
 
       // Check configured size limit from system settings
-      const settingKey = category === 'screenshot' ? 'MAX_SCREENSHOT_SIZE_MB' : 'MAX_UPLOAD_SIZE_MB';
-      const defaultMb = category === 'screenshot' ? 5 : 20;
+      const settingKey = uploadCategory === 'screenshot' ? 'MAX_SCREENSHOT_SIZE_MB' : 'MAX_UPLOAD_SIZE_MB';
+      const defaultMb = uploadCategory === 'screenshot' ? 5 : 20;
       const setting = await prisma.systemSetting.findUnique({ where: { key: settingKey } });
       const maxMb = setting ? Number(setting.value) || defaultMb : defaultMb;
 
-      if (buf.byteLength > maxMb * 1024 * 1024) {
-        return sendError(res, 400, `File size exceeds the maximum allowed limit of ${maxMb} MB.`);
+      const validation = validateUploadFile(buf, typeof reportedMime === 'string' ? reportedMime : '', maxMb);
+      if (!validation.valid || !validation.detectedMime) {
+        return sendError(res, 400, validation.error || 'Invalid file format. Only authentic PDF, JPG, and PNG files are accepted.');
       }
 
-      // Generate randomized storage key (never includes user filename)
-      const storageKey = generateRandomStorageKey('quarantine', signature.detectedExt || 'pdf');
-      await storage.upload(storageKey, buf, signature.detectedMime);
+      const storageKey = generateRandomStorageKey('quarantine', validation.detectedExt || 'pdf', `uploads/${actor.id}`);
+      await storage.upload(storageKey, buf, validation.detectedMime);
       const fileSha256 = sha256(buf);
 
       return sendJson(res, 201, {
         storageKey,
         sha256: fileSha256,
-        mimeType: signature.detectedMime,
+        mimeType: validation.detectedMime,
         sizeBytes: buf.byteLength,
       });
     }
@@ -2587,7 +2717,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     }
 
     // -------------------------------------------------------------
-    // GET /api/papers/:id/access - Server-side Paper Authorization & Signed Stream
+    // GET /api/papers/:id/access - Server-side Paper Authorization
     // -------------------------------------------------------------
     if (pathname.startsWith('/api/papers/') && pathname.endsWith('/access') && method === 'GET') {
       const parts = pathname.split('/');
@@ -2648,22 +2778,25 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         courseIds: e.programTerm.courses.map((c) => c.courseId),
       }));
 
-      const check = verifyPaperAccess(
-        user ? { ...user, deletedAt: user.deletedAt ? user.deletedAt.toISOString() : null } : null,
-        paper ? {
-          id: paper.id,
-          courseId: paper.courseId,
-          status: paper.status,
-          isFreeSample: paper.isFreeSample,
-          deletedAt: paper.deletedAt ? paper.deletedAt.toISOString() : null,
-          course: {
-            id: paper.course.id,
-            isActive: paper.course.isActive,
-            deletedAt: paper.course.deletedAt ? paper.course.deletedAt.toISOString() : null,
-          },
-        } : null,
-        entitlementContexts
-      );
+      const canManageContent = actor.role === Role.ADMIN || actor.role === Role.CONTENT_MANAGER;
+      const check: { allowed: boolean; reason?: string } = canManageContent
+        ? { allowed: Boolean(user && paper && paper.deletedAt === null) }
+        : verifyPaperAccess(
+            user ? { ...user, deletedAt: user.deletedAt ? user.deletedAt.toISOString() : null } : null,
+            paper ? {
+              id: paper.id,
+              courseId: paper.courseId,
+              status: paper.status,
+              isFreeSample: paper.isFreeSample,
+              deletedAt: paper.deletedAt ? paper.deletedAt.toISOString() : null,
+              course: {
+                id: paper.course.id,
+                isActive: paper.course.isActive,
+                deletedAt: paper.course.deletedAt ? paper.course.deletedAt.toISOString() : null,
+              },
+            } : null,
+            entitlementContexts
+          );
 
       if (!check.allowed) {
         return sendJson(res, 403, {
@@ -2673,98 +2806,34 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         });
       }
 
-      // Log authorized view to PaperViewLog
-      const ip = getClientIp(req);
-      const userAgent = req.headers['user-agent'] || 'Mozilla/5.0';
-
-      await prisma.paperViewLog.create({
-        data: {
-          examPaperId: paperId,
-          userId,
-          ipAddress: ip,
-          userAgent,
-        },
-      });
-
-      // Ensure paper binary exists in storage - fail with clear error if missing (Hard Rule 2)
-      const existsInStorage = await storage.exists(paper!.storageKey);
-      if (!existsInStorage) {
+      const source = await storage.download(paper!.storageKey);
+      if (!source) {
         return sendError(res, 404, 'Exam paper document file is missing from secure storage.');
       }
+      const pageCount = await getDocumentPageCount(source);
 
-      // Issue signed URL expiring in 2 hours (allows complete study sessions without mid-reading cutoffs)
-      const secret = getSessionSecret();
-      const expiresInSeconds = 7200;
-      const expiresAtMs = Date.now() + expiresInSeconds * 1000;
-      const streamToken = signStreamTicket(paper!.storageKey, expiresAtMs, secret, userId);
-      const streamUrl = `/api/papers/${paper!.id}/stream?token=${streamToken}&expires=${expiresAtMs}&u=${encodeURIComponent(userId)}`;
+      const ip = getClientIp(req);
+      const userAgent = req.headers['user-agent'] || 'Mozilla/5.0';
+      await prisma.paperViewLog.create({
+        data: { examPaperId: paperId, userId, ipAddress: ip, userAgent },
+      });
 
       return sendJson(res, 200, {
         allowed: true,
-        streamUrl,
-        expiresAt: expiresAtMs,
+        pageCount,
         watermark: {
-          studentName: user?.fullName || 'ExamVault Student',
-          studentId: user?.studentId || 'AMU-2026-0042',
-          ipAddress: ip,
+          studentName: user?.fullName || actor.id,
+          studentId: user?.studentId || actor.id,
           timestamp: new Date().toISOString(),
         },
-        paper,
       });
     }
 
     // -------------------------------------------------------------
-    // GET /api/papers/:id/stream - Server-side Paper Stream with Cache-Control: no-store
+    // GET /api/papers/:id/stream - Legacy endpoint disabled; never serve source papers
     // -------------------------------------------------------------
     if (pathname.startsWith('/api/papers/') && pathname.endsWith('/stream') && method === 'GET') {
-      const parts = pathname.split('/');
-      const paperId = parts[3];
-      const token = url.searchParams.get('token');
-      const expires = url.searchParams.get('expires');
-
-      if (!token || !expires) {
-        return sendError(res, 403, 'Missing required stream security token or expiration timestamp');
-      }
-
-      const expiresNum = Number(expires);
-      if (isNaN(expiresNum) || Date.now() > expiresNum) {
-        return sendError(res, 403, 'Signed URL has expired. Please refresh the viewer.');
-      }
-
-      const paper = await prisma.examPaper.findUnique({
-        where: { id: paperId },
-      });
-
-      if (!paper || paper.deletedAt !== null) {
-        return sendError(res, 404, 'Exam paper not found or has been removed.');
-      }
-
-      if (paper.status !== PaperStatus.PUBLISHED) {
-        return sendError(res, 403, 'Exam paper is not available for streaming.');
-      }
-
-      const actor = await resolveActor(req);
-      const userBinding = url.searchParams.get('u') || actor?.id || undefined;
-      const secret = getSessionSecret();
-      const isValidSig = verifyStreamTicket(paper.storageKey, expiresNum, token, secret, userBinding);
-      if (!isValidSig) {
-        return sendError(res, 403, 'Invalid or forged stream signature. Access denied.');
-      }
-
-      const data = await storage.download(paper.storageKey);
-      if (!data) {
-        return sendError(res, 404, 'Paper asset not found in private storage');
-      }
-
-      res.writeHead(200, {
-        'Content-Type': paper.mimeType || 'application/pdf',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-        'Pragma': 'no-cache',
-        'X-Content-Type-Options': 'nosniff',
-        'Content-Disposition': 'inline', // NEVER attachment! No direct download!
-      });
-      res.end(Buffer.from(data));
-      return;
+      return sendError(res, 410, 'Direct paper streaming is disabled. Use the authenticated page viewer.');
     }
 
     // -------------------------------------------------------------
@@ -2808,8 +2877,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             authorized = true;
           } else if (actor.role === Role.STUDENT) {
             // SECURITY: students may only read their own uploaded receipts and
-            // submissions. Published paper assets are never served here — they
-            // are streamed through signed, entitlement-checked tickets.
+            // submissions. Published paper assets are available through the
+            // authenticated, entitlement-checked rendered-page route.
             if (key.startsWith('quarantine/')) {
               const ownPayment = await prisma.payment.findFirst({
                 where: { screenshotKey: key, userId: actor.id },
@@ -2854,20 +2923,15 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     }
 
     // -------------------------------------------------------------
-    // GET /api/papers/:id/pages/:pageNum - Authenticated Compressed Page Image
-    //
-    // NOT IMPLEMENTED. The per-page assets this route looks for under
-    // `published/<paperId>/pages/` are never produced: `convertAndStoreCompressedPages`
-    // (src/lib/pageCompressor.ts) generates *placeholder* exam content rather than
-    // rendering the paper's real PDF, so it is deliberately not wired into the
-    // publish flow. Until real page rendering exists, this route returns 404 for
-    // every paper and callers should use the signed stream endpoint
-    // (`/api/papers/:id/stream`), which serves the actual stored file.
+    // GET /api/papers/:id/pages/:pageNum - Authenticated, watermarked real page
     // -------------------------------------------------------------
     if (pathname.startsWith('/api/papers/') && pathname.includes('/pages/') && method === 'GET') {
       const parts = pathname.split('/');
       const paperId = parts[3];
-      const pageNum = parseInt(parts[5], 10) || 1;
+      const pageNum = Number(parts[5]);
+      if (!Number.isSafeInteger(pageNum) || pageNum < 1) {
+        return sendError(res, 400, 'Page number must be a positive integer.');
+      }
 
       const actor = await resolveActor(req);
       if (!actor || !actor.user) {
@@ -2883,7 +2947,6 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 404, 'Exam paper not found.');
       }
 
-      // Verify access permission
       const canManage = actor.role === Role.ADMIN || actor.role === Role.CONTENT_MANAGER;
       if (!canManage) {
         const entitlements = await prisma.entitlement.findMany({
@@ -2919,25 +2982,57 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         }
       }
 
-      const pageKey = `published/${paper.id}/pages/page_${pageNum}.svg`;
-      const pageData = await storage.download(pageKey);
-
-      if (!pageData) {
-        return sendError(res, 404, 'Paper page asset not found in storage.');
+      const activeSessionsCount = await prisma.session.count({
+        where: { userId: actor.id, expiresAt: { gt: new Date() } },
+      });
+      if (activeSessionsCount > 2) {
+        return sendError(res, 403, 'Maximum 2 concurrent sessions reached.');
       }
 
+      const source = await storage.download(paper.storageKey);
+      if (!source) {
+        return sendError(res, 404, 'Exam paper document file is missing from secure storage.');
+      }
+
+      const sourceHash = computeSha256(source);
+      const pageKey = `published/${paper.id}/pages/${sourceHash}-${pageNum}.png`;
+      let renderedPage = await storage.download(pageKey);
+      let pageCount: number;
+      if (renderedPage) {
+        pageCount = await getDocumentPageCount(source);
+        if (pageNum > pageCount) {
+          return sendError(res, 416, `Requested page exceeds the document's ${pageCount} pages.`);
+        }
+      } else {
+        let rendered;
+        try {
+          rendered = await renderDocumentPage(source, pageNum);
+        } catch (error) {
+          if (error instanceof RangeError) {
+            return sendError(res, 416, 'Requested page is outside the document.');
+          }
+          throw error;
+        }
+        pageCount = rendered.pageCount;
+        await storage.upload(pageKey, rendered.image, 'image/png');
+        renderedPage = rendered.image;
+      }
+
+      const watermarkedPage = await applyWatermarkToPage(renderedPage, {
+        fullName: actor.user.fullName || actor.id,
+        studentId: actor.user.studentId || actor.id,
+        date: new Date().toISOString().slice(0, 10),
+      });
+
       res.writeHead(200, {
-        'Content-Type': 'image/svg+xml',
+        'Content-Type': 'image/png',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
         'Pragma': 'no-cache',
         'X-Content-Type-Options': 'nosniff',
         'Content-Disposition': 'inline',
-        // SECURITY: SVG is served inline from the app origin. A restrictive CSP
-        // neutralises any script/foreignObject payload that ever reaches this
-        // asset, even if generation-side escaping is bypassed.
-        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        'X-Paper-Page-Count': String(pageCount),
       });
-      res.end(Buffer.from(pageData));
+      res.end(watermarkedPage);
       return;
     }
 
@@ -2989,14 +3084,14 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         data: {
           userId,
           title: 'Problem Report Received',
-          message: `Your report regarding "${paper.title}" (${category}) has been logged. Woliso Campus staff will review the quality.`,
+          message: `Your report regarding "${paper.title}" (${category}) has been logged. Ambo University staff will review the quality.`,
           type: 'INFO',
         },
       });
 
       return sendJson(res, 201, {
         success: true,
-        message: 'Problem report recorded successfully. Woliso Campus team notified.',
+        message: 'Problem report recorded successfully. Ambo University team notified.',
       });
     }
 

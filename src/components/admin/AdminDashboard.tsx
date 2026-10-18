@@ -47,7 +47,7 @@ export default function AdminDashboard({
   return (
     <>
       <PageHead
-        eyebrow="AMBO UNIVERSITY · WOLISO CAMPUS"
+        eyebrow="AMBO UNIVERSITY"
         title="Admin Overview"
         text="Real-time operational metrics across payments, student access, past papers, and security events."
         action={

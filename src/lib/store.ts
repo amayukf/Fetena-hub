@@ -151,7 +151,7 @@ export interface PlatformConfig {
 }
 
 // -------------------------------------------------------------
-// FRESHMAN CURRICULUM DEFINITIONS: AMBO UNIVERSITY - WOLISO CAMPUS
+// FRESHMAN CURRICULUM DEFINITIONS: AMBO UNIVERSITY
 // -------------------------------------------------------------
 
 export interface FreshmanCourseItem extends CourseSummary {
@@ -321,7 +321,7 @@ export const INITIAL_SYSTEM_SETTINGS: SystemSettingsState = {
   maxUploadSizeMb: '20',
   maxScreenshotSizeMb: '5',
   paymentVerificationSlaHours: '2',
-  announcementBanner: 'Ambo University Woliso Campus past exam papers archive is active.',
+  announcementBanner: 'Ambo University past exam papers archive is active.',
   announcementActive: true,
   paymentInstructions: 'Transfer the exact semester unlock fee using Telebirr or CBE Birr. Include your Student ID in the transaction note, and upload a clear screenshot of the completed transfer.',
   maxPayoutLimitEtb: '300',

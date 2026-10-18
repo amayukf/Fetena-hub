@@ -276,7 +276,8 @@ describe("ExamVault Private Storage & Secure Viewer (Step 8)", () => {
       expect(pageBuf.byteLength).toBeLessThan(100 * 1024);
 
       const svgStr = pageBuf.toString("utf-8");
-      expect(svgStr).toContain("AMBO UNIVERSITY — WOLISO CAMPUS");
+      expect(svgStr).toContain("AMBO UNIVERSITY");
+      expect(svgStr).not.toContain("WOLISO");
       expect(svgStr).toContain("Communicative English Language Skills I (FLEn 1011)");
       expect(svgStr).toContain("EXAMVAULT PROTECTED");
     });

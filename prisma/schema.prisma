@@ -160,8 +160,8 @@ model PasswordResetToken {
 
 model Campus {
   id          String      @id @default(uuid())
-  code        String      @unique // e.g. "WOLISO", "MAIN"
-  name        String      // e.g. "Ambo University - Woliso Campus"
+  code        String      @unique // e.g. "AMBO", "MAIN"
+  name        String      // e.g. "Ambo University"
   isActive    Boolean     @default(true)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt

@@ -40,7 +40,7 @@ async function seedDev() {
   const defaultPasswordHash = await bcrypt.hash('Password123!', 10);
 
   // Find campus and programs
-  const campus = await prisma.campus.findUnique({ where: { code: 'WOLISO' } });
+  const campus = (await prisma.campus.findFirst({ where: { code: { in: ['AMBO', 'WOLISO'] } } })) || (await prisma.campus.findFirst());
   const natProgram = await prisma.program.findFirst({ where: { code: 'NAT_SCI' } });
   const socProgram = await prisma.program.findFirst({ where: { code: 'SOC_SCI' } });
 

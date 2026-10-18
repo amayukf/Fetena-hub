@@ -4,7 +4,7 @@ import { handleApiRequest, prisma, checkRateLimit } from '../server/apiHandler';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { signStreamTicket, detectFileSignature, validateStorageKey, storage } from '../src/lib/storage';
+import { detectFileSignature, validateStorageKey, storage } from '../src/lib/storage';
 
 function sha256(data: string | Buffer): string {
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -87,7 +87,7 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
 
     // Reference campus & programs
     const campus = await prisma.campus.create({
-      data: { code: 'WOLISO', name: 'Ambo University - Woliso Campus' },
+      data: { code: 'WOLISO', name: 'Ambo University' },
     });
 
     const natProg = await prisma.program.create({
@@ -131,20 +131,20 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
     // Users
     const pwdHash = await bcrypt.hash('TestPassword123!', 10);
     adminUser = await prisma.user.create({
-      data: { fullName: 'Security Admin', email: 'sec_admin@woliso.edu.et', role: Role.ADMIN, passwordHash: pwdHash, isActive: true },
+      data: { fullName: 'Security Admin', email: 'sec_admin@ambo.edu.et', role: Role.ADMIN, passwordHash: pwdHash, isActive: true },
     });
     contentManagerUser = await prisma.user.create({
-      data: { fullName: 'Content Reviewer', email: 'sec_cm@woliso.edu.et', role: Role.CONTENT_MANAGER, passwordHash: pwdHash, isActive: true },
+      data: { fullName: 'Content Reviewer', email: 'sec_cm@ambo.edu.et', role: Role.CONTENT_MANAGER, passwordHash: pwdHash, isActive: true },
     });
     paymentVerifierUser = await prisma.user.create({
-      data: { fullName: 'Payment Auditor', email: 'sec_pv@woliso.edu.et', role: Role.PAYMENT_VERIFIER, passwordHash: pwdHash, isActive: true },
+      data: { fullName: 'Payment Auditor', email: 'sec_pv@ambo.edu.et', role: Role.PAYMENT_VERIFIER, passwordHash: pwdHash, isActive: true },
     });
 
     studentA = await prisma.user.create({
-      data: { fullName: 'Student NatSci', email: 'nat_student@woliso.edu.et', studentId: 'AMU-NAT-SEC-01', role: Role.STUDENT, programId: natProg.id, passwordHash: pwdHash, isActive: true },
+      data: { fullName: 'Student NatSci', email: 'nat_student@ambo.edu.et', studentId: 'AMU-NAT-SEC-01', role: Role.STUDENT, programId: natProg.id, passwordHash: pwdHash, isActive: true },
     });
     studentB = await prisma.user.create({
-      data: { fullName: 'Student SocSci', email: 'soc_student@woliso.edu.et', studentId: 'AMU-SOC-SEC-02', role: Role.STUDENT, programId: socProg.id, passwordHash: pwdHash, isActive: true },
+      data: { fullName: 'Student SocSci', email: 'soc_student@ambo.edu.et', studentId: 'AMU-SOC-SEC-02', role: Role.STUDENT, programId: socProg.id, passwordHash: pwdHash, isActive: true },
     });
 
     // Student A Entitlement (Natural Science)
@@ -243,27 +243,20 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
       expect(res.body.allowed).toBe(false);
     });
 
-    it('1.3: Direct streaming URL fails without signed token or with expired ticket', async () => {
-      // Missing token
+    it('1.3: Legacy direct streaming endpoint never returns a paper file', async () => {
       const noTokenRes = await callApi('GET', `/api/papers/${paperPhysPublished.id}/stream`);
-      expect(noTokenRes.status).toBe(403);
+      expect(noTokenRes.status).toBe(410);
+      expect(noTokenRes.body.error).toContain('Direct paper streaming is disabled');
 
-      // Expired token (10 seconds ago)
-      const pastExpires = Date.now() - 10000;
-      const secret = process.env.SESSION_SECRET || 'examvault-secure-local-storage-secret';
-      const expiredSig = signStreamTicket(paperPhysPublished.storageKey, pastExpires, secret);
-      const expiredRes = await callApi('GET', `/api/papers/${paperPhysPublished.id}/stream?token=${expiredSig}&expires=${pastExpires}`);
-      expect(expiredRes.status).toBe(403);
-      expect(expiredRes.body.error).toContain('expired');
+      const legacyTicketRes = await callApi('GET', `/api/papers/${paperPhysPublished.id}/stream?token=legacy&expires=${Date.now() + 60000}`);
+      expect(legacyTicketRes.status).toBe(410);
     });
 
-    it('1.4: DRAFT and HIDDEN papers cannot be streamed even with valid signature (403)', async () => {
-      const secret = process.env.SESSION_SECRET || 'examvault-secure-local-storage-secret';
-      const futureExpires = Date.now() + 60000;
-      const draftSig = signStreamTicket(paperDraft.storageKey, futureExpires, secret);
-      const res = await callApi('GET', `/api/papers/${paperDraft.id}/stream?token=${draftSig}&expires=${futureExpires}`);
-      expect(res.status).toBe(403);
-      expect(res.body.error).toContain('not available for streaming');
+    it('1.4: Published and draft papers cannot be obtained through the legacy stream route', async () => {
+      const publishedRes = await callApi('GET', `/api/papers/${paperPhysPublished.id}/stream`);
+      const draftRes = await callApi('GET', `/api/papers/${paperDraft.id}/stream?token=legacy`);
+      expect(publishedRes.status).toBe(410);
+      expect(draftRes.status).toBe(410);
     });
 
     it('1.5: Direct storage key access without signed URL is rejected (403)', async () => {
@@ -365,7 +358,7 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
     it('4.1: Signup payload with role=ADMIN is strictly forced to STUDENT', async () => {
       const res = await callApi('POST', '/api/auth/signup', {
         fullName: 'Hacker Wannabe',
-        email: 'hacker@woliso.edu.et',
+        email: 'hacker@ambo.edu.et',
         password: 'SecurePassword123!',
         role: 'ADMIN', // Injection attempt
         canSell: true,
@@ -374,7 +367,7 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
       expect(res.status).toBe(201);
       expect(res.body.user.role).toBe(Role.STUDENT);
 
-      const dbUser = await prisma.user.findUnique({ where: { email: 'hacker@woliso.edu.et' } });
+      const dbUser = await prisma.user.findUnique({ where: { email: 'hacker@ambo.edu.et' } });
       expect(dbUser?.role).toBe(Role.STUDENT);
     });
   });
@@ -401,13 +394,19 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
     });
 
     it('5.2: Server derives payment amount strictly from ProgramTerm (client price ignored)', async () => {
+      const receiptBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+      const uploadRes = await callApi('POST', '/api/upload', {
+        fileBase64: receiptBytes.toString('base64'),
+        reportedMime: 'image/jpeg',
+        category: 'screenshot',
+      }, { 'x-actor-id': studentB.id });
+      expect(uploadRes.status).toBe(201);
       const res = await callApi('POST', '/api/payments', {
         userId: studentB.id,
         programTermId: socProgramTerm.id,
         paymentMethod: 'TELEBIRR',
         transactionId: 'TB_SEC_UNIQUE_002',
-        receiptImageStorageKey: 'quarantine/receipt_legit.jpg',
-        receiptImageSha256: sha256('receipt-legit-002'),
+        receiptImageStorageKey: uploadRes.body.storageKey,
         amountEtb: 5.00, // Client tries to pay only 5 ETB instead of 50 ETB
       }, {
         'x-actor-id': studentB.id,
@@ -422,13 +421,19 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
     });
 
     it('5.3: Duplicate pending payment for same student and semester is rejected (409)', async () => {
+      const receiptBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+      const uploadRes = await callApi('POST', '/api/upload', {
+        fileBase64: receiptBytes.toString('base64'),
+        reportedMime: 'image/jpeg',
+        category: 'screenshot',
+      }, { 'x-actor-id': studentB.id });
+      expect(uploadRes.status).toBe(201);
       const res = await callApi('POST', '/api/payments', {
         userId: studentB.id,
         programTermId: socProgramTerm.id,
         paymentMethod: 'TELEBIRR',
         transactionId: 'TB_SEC_UNIQUE_003',
-        receiptImageStorageKey: 'quarantine/receipt_pending_dup.jpg',
-        receiptImageSha256: sha256('receipt-pending-dup'),
+        receiptImageStorageKey: uploadRes.body.storageKey,
       }, {
         'x-actor-id': studentB.id,
       });
@@ -451,6 +456,8 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
         fileBase64: fakeExePdf.toString('base64'),
         reportedMime: 'application/pdf',
         category: 'paper',
+      }, {
+        'x-actor-id': contentManagerUser.id,
       });
 
       expect(res.status).toBe(400);

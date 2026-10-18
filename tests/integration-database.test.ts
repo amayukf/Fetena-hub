@@ -52,7 +52,7 @@ describe('ExamVault Database Integration & Security Test Suite', () => {
     campus = await prisma.campus.create({
       data: {
         code: 'WOLISO',
-        name: 'Ambo University - Woliso Campus',
+        name: 'Ambo University',
         isActive: true,
       },
     });

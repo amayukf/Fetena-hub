@@ -116,7 +116,7 @@ export default function SettingsManager({
               <div className="setting-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 0' }}>
                 <div>
                   <strong style={{ fontSize: '0.9rem' }}>Standardized Campus Pricing</strong>
-                  <p style={{ fontSize: '0.8rem' }}>Enforces the uniform 50 ETB fee across both Natural Science and Social Science streams at Woliso Campus.</p>
+                  <p style={{ fontSize: '0.8rem' }}>Enforces the uniform 50 ETB fee across both Natural Science and Social Science streams at Ambo University.</p>
                 </div>
                 <label className="switch"><input type="checkbox" defaultChecked disabled /><span /></label>
               </div>
@@ -142,7 +142,7 @@ export default function SettingsManager({
                 />
                 <Input
                   label="Telebirr Recipient Name"
-                  placeholder="Ambo University Woliso Campus"
+                  placeholder="Ambo University"
                   value={telebirrRecipient}
                   onChange={e => setTelebirrRecipient(e.target.value)}
                 />
@@ -157,7 +157,7 @@ export default function SettingsManager({
                 />
                 <Input
                   label="CBE Recipient / Branch Name"
-                  placeholder="Ambo University Woliso Campus"
+                  placeholder="Ambo University"
                   value={cbeRecipient}
                   onChange={e => setCbeRecipient(e.target.value)}
                 />
@@ -201,7 +201,7 @@ export default function SettingsManager({
           {activeSection === 'announcement' && (
             <Card className="form-card">
               <Heading level={2}>Platform Announcement Banner</Heading>
-              <p>Top banner shown to all logged-in students across Woliso Campus.</p>
+              <p>Top banner shown to all logged-in students across Ambo University.</p>
 
               <label className="field" style={{ margin: '14px 0' }}>
                 <span>Announcement Text</span>

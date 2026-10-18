@@ -105,7 +105,7 @@ export default function UsersManager({
       <PageHead
         eyebrow="USER MANAGEMENT & ROLES"
         title="Users & Access History"
-        text="Manage student and staff roles across Woliso campus, inspect student access and viewing history, and enforce security policies."
+        text="Manage student and staff roles across Ambo University, inspect student access and viewing history, and enforce security policies."
       />
 
       <Card className="table-card">

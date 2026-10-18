@@ -60,6 +60,18 @@ describe('Security hardening regressions', () => {
   let natProgram: any;
   let programTerm: any;
   let y1s2Term: any;
+  const receiptBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+
+  async function uploadReceipt(userId: string, name: string): Promise<string> {
+    const result = await callApi('POST', '/api/upload', {
+      fileBase64: receiptBytes.toString('base64'),
+      reportedMime: 'image/jpeg',
+      category: 'screenshot',
+      fileName: name,
+    }, { 'x-actor-id': userId });
+    expect(result.status).toBe(201);
+    return result.body.storageKey;
+  }
 
   beforeAll(async () => {
     await prisma.$executeRawUnsafe(`
@@ -70,7 +82,7 @@ describe('Security hardening regressions', () => {
       CASCADE;
     `);
 
-    const campus = await prisma.campus.create({ data: { code: 'WOLISO', name: 'Ambo University - Woliso Campus' } });
+    const campus = await prisma.campus.create({ data: { code: 'WOLISO', name: 'Ambo University' } });
     natProgram = await prisma.program.create({
       data: { campusId: campus.id, code: 'NAT_SCI', name: 'Natural Science Stream', type: ProgramType.STREAM },
     });
@@ -89,19 +101,19 @@ describe('Security hardening regressions', () => {
     const pwdHash = await bcrypt.hash('TestPassword123!', 10);
 
     admin = await prisma.user.create({
-      data: { fullName: 'Hardening Admin', email: 'hard_admin@woliso.edu.et', role: Role.ADMIN, passwordHash: pwdHash, isActive: true },
+      data: { fullName: 'Hardening Admin', email: 'hard_admin@ambo.edu.et', role: Role.ADMIN, passwordHash: pwdHash, isActive: true },
     });
     verifier = await prisma.user.create({
-      data: { fullName: 'Hardening Verifier', email: 'hard_pv@woliso.edu.et', role: Role.PAYMENT_VERIFIER, passwordHash: pwdHash, isActive: true },
+      data: { fullName: 'Hardening Verifier', email: 'hard_pv@ambo.edu.et', role: Role.PAYMENT_VERIFIER, passwordHash: pwdHash, isActive: true },
     });
     student = await prisma.user.create({
-      data: { fullName: 'Hardening Student', email: 'hard_student@woliso.edu.et', studentId: 'AMU-HARD-01', role: Role.STUDENT, programId: natProgram.id, passwordHash: pwdHash, isActive: true },
+      data: { fullName: 'Hardening Student', email: 'hard_student@ambo.edu.et', studentId: 'AMU-HARD-01', role: Role.STUDENT, programId: natProgram.id, passwordHash: pwdHash, isActive: true },
     });
     student2 = await prisma.user.create({
-      data: { fullName: 'Hardening Student Two', email: 'hard_student2@woliso.edu.et', studentId: 'AMU-HARD-02', role: Role.STUDENT, programId: natProgram.id, passwordHash: pwdHash, isActive: true },
+      data: { fullName: 'Hardening Student Two', email: 'hard_student2@ambo.edu.et', studentId: 'AMU-HARD-02', role: Role.STUDENT, programId: natProgram.id, passwordHash: pwdHash, isActive: true },
     });
     forcedUser = await prisma.user.create({
-      data: { fullName: 'Forced Password User', email: 'hard_forced@woliso.edu.et', studentId: 'AMU-HARD-03', role: Role.STUDENT, programId: natProgram.id, passwordHash: pwdHash, isActive: true, mustChangePassword: true },
+      data: { fullName: 'Forced Password User', email: 'hard_forced@ambo.edu.et', studentId: 'AMU-HARD-03', role: Role.STUDENT, programId: natProgram.id, passwordHash: pwdHash, isActive: true, mustChangePassword: true },
     });
   });
 
@@ -132,6 +144,7 @@ describe('Security hardening regressions', () => {
   });
 
   it('accepts a server-generated "quarantine/" receipt key', async () => {
+    const storageKey = await uploadReceipt(student.id, 'hardening-receipt');
     const res = await callApi(
       'POST',
       '/api/payments',
@@ -139,7 +152,7 @@ describe('Security hardening regressions', () => {
         programTermId: programTerm.id,
         paymentMethod: 'TELEBIRR',
         transactionId: 'TB_HARDEN_002',
-        storageKey: 'quarantine/hardening-receipt.jpg',
+        storageKey,
       },
       { 'x-actor-id': student.id }
     );
@@ -224,6 +237,7 @@ describe('Security hardening regressions', () => {
   // -------------------------------------------------------------------------
 
   it('deactivates the granted entitlement when a payment is rejected', async () => {
+    const storageKey = await uploadReceipt(student2.id, 'hardening-approved');
     const created = await callApi(
       'POST',
       '/api/payments',
@@ -231,7 +245,7 @@ describe('Security hardening regressions', () => {
         programTermId: programTerm.id,
         paymentMethod: 'TELEBIRR',
         transactionId: 'TB_HARDEN_003',
-        storageKey: 'quarantine/hardening-approved.jpg',
+        storageKey,
       },
       { 'x-actor-id': student2.id }
     );
