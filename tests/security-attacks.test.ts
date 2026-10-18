@@ -81,10 +81,10 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
     });
 
     const natProg = await prisma.program.create({
-      data: { campusId: campus.id, code: 'NAT_SCI', name: 'Natural Science Stream', type: ProgramType.NATURAL_SCIENCE },
+      data: { campusId: campus.id, code: 'NAT_SCI', name: 'Natural Science Stream', type: ProgramType.STREAM },
     });
     const socProg = await prisma.program.create({
-      data: { campusId: campus.id, code: 'SOC_SCI', name: 'Social Science Stream', type: ProgramType.SOCIAL_SCIENCE },
+      data: { campusId: campus.id, code: 'SOC_SCI', name: 'Social Science Stream', type: ProgramType.STREAM },
     });
 
     const termY1S1 = await prisma.term.create({
