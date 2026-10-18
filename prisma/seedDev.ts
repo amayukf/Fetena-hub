@@ -9,6 +9,32 @@ async function seedDev() {
     process.exit(1);
   }
 
+  // SECURITY: this seed creates accounts whose password is committed in source
+  // and prints every credential to the console. Guard it behind an explicit
+  // acknowledgement and refuse to run against a production-looking database.
+  const databaseName = (() => {
+    try {
+      return new URL(process.env.DATABASE_URL || '').pathname.replace(/^\/+/, '');
+    } catch {
+      return '';
+    }
+  })();
+
+  if (/prod/i.test(databaseName)) {
+    console.error(
+      `⛔ FATAL: DATABASE_URL points at "${databaseName}". Refusing to seed dev fixtures into a production-looking database.`
+    );
+    process.exit(1);
+  }
+
+  if (process.env.SEED_DEV_CONFIRM !== 'yes') {
+    console.error(
+      '⛔ seedDev creates test accounts with a well-known password and prints them to the console.\n' +
+        '   Set SEED_DEV_CONFIRM=yes to confirm this is a local development database.'
+    );
+    process.exit(1);
+  }
+
   console.log('🧪 Starting Dev Seed: Provisioning local testing accounts for each role...');
 
   const defaultPasswordHash = await bcrypt.hash('Password123!', 10);
