@@ -3,6 +3,8 @@ dist/
 build/
 .cache/
 .env*
+# The template must be committed so new deployments have a starting point.
+!.env.example
 .vite/
 vite.config.*.timestamp-*
 *.tsbuildinfo
