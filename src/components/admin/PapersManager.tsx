@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef } from 'react';
 import { Card, Heading, Badge, Button, Icon, PageHead, Input, Select } from '../../App';
 import { api } from '../../lib/api';
+import { estimatePageCount } from '../../lib/pageCount';
 import type { FreshmanCourseItem, StoreExamPaper } from '../../lib/store';
 import type { UserSession, ExamType, ScanQuality } from '../../types';
 
@@ -140,7 +141,7 @@ export default function PapersManager({
             quality: uploadQuality,
             status: uploadStatus,
             isFreeSample: uploadIsFreeSample,
-            pageCount: Math.max(1, Math.round(file.size / 90000)),
+            pageCount: estimatePageCount(file.size),
             storageKey: uploadRes.storageKey,
             sha256: uploadRes.sha256,
             mimeType: uploadRes.mimeType,
