@@ -130,19 +130,32 @@ export async function checkRateLimit(
   }
 }
 
-async function parseBody(req: IncomingMessage): Promise<any> {
+/** Maximum accepted request body size (25 MB). */
+const MAX_BODY_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Attach the body reader to a request exactly once and cache the result on
+ * `req.__bodyPromise`. Safe to call more than once.
+ *
+ * The cached promise can reject (oversized payload). Callers that need the body
+ * await `parseBody()` and observe that rejection; callers that never read a body
+ * (most GET routes) do not, so a rejection handler is attached here to stop it
+ * from becoming an unhandled rejection that terminates the process.
+ */
+function primeRequestBody(req: IncomingMessage): void {
   const reqAny = req as any;
-  if (reqAny.__bodyPromise) {
-    return reqAny.__bodyPromise;
-  }
+  if (reqAny.__bodyPromise) return;
+
   if (reqAny.body !== undefined && typeof reqAny.body === 'object') {
-    return reqAny.body;
+    reqAny.__bodyPromise = Promise.resolve(reqAny.body);
+    return;
   }
-  return new Promise((resolve, reject) => {
+
+  reqAny.__bodyPromise = new Promise((resolve, reject) => {
     let body = '';
     req.on('data', chunk => {
       body += chunk;
-      if (body.length > 25 * 1024 * 1024) {
+      if (body.length > MAX_BODY_BYTES) {
         req.destroy();
         reject(new Error('Payload too large'));
       }
@@ -157,24 +170,25 @@ async function parseBody(req: IncomingMessage): Promise<any> {
     });
     req.on('error', reject);
   });
+
+  // Mark the rejection as handled; awaiters still see it via parseBody().
+  reqAny.__bodyPromise.catch(() => {});
+}
+
+async function parseBody(req: IncomingMessage): Promise<any> {
+  primeRequestBody(req);
+  return (req as any).__bodyPromise;
 }
 
 function sendJson(res: ServerResponse, status: number, data: any, headers?: Record<string, string | string[]>) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
-    'content-type': 'application/json',
     'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-    'cache-control': 'no-store, no-cache, must-revalidate, private',
     'X-Content-Type-Options': 'nosniff',
-    'x-content-type-options': 'nosniff',
     'X-Frame-Options': 'DENY',
-    'x-frame-options': 'DENY',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
-    'referrer-policy': 'strict-origin-when-cross-origin',
     'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self';",
-    'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self';",
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-    'strict-transport-security': 'max-age=31536000; includeSubDomains',
     ...(headers || {}),
   });
   res.end(JSON.stringify(data));
@@ -274,32 +288,8 @@ export async function resolveActor(
 }
 
 export async function handleApiRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const reqAny = req as any;
-  if (!reqAny.__bodyPromise) {
-    if (reqAny.body !== undefined && typeof reqAny.body === 'object') {
-      reqAny.__bodyPromise = Promise.resolve(reqAny.body);
-    } else {
-      reqAny.__bodyPromise = new Promise((resolve, reject) => {
-        let body = '';
-        req.on('data', chunk => {
-          body += chunk;
-          if (body.length > 25 * 1024 * 1024) {
-            req.destroy();
-            reject(new Error('Payload too large'));
-          }
-        });
-        req.on('end', () => {
-          if (!body) return resolve({});
-          try {
-            resolve(JSON.parse(body));
-          } catch (err) {
-            resolve({});
-          }
-        });
-        req.on('error', reject);
-      });
-    }
-  }
+  // Read (and cache) the request body once, up front.
+  primeRequestBody(req);
 
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;

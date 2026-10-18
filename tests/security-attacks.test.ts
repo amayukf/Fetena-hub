@@ -48,6 +48,16 @@ function callApi(method: string, path: string, body?: any, headers: Record<strin
   });
 }
 
+/**
+ * HTTP header names are case-insensitive, so look a header up without caring
+ * how the server happened to capitalise it.
+ */
+function header(res: { headers: any }, name: string): string | undefined {
+  const target = name.toLowerCase();
+  const key = Object.keys(res.headers || {}).find((k) => k.toLowerCase() === target);
+  return key ? res.headers[key] : undefined;
+}
+
 describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => {
   let adminUser: any;
   let contentManagerUser: any;
@@ -502,11 +512,11 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
     it('8.1: API responses include HSTS, CSP, and X-Content-Type-Options: nosniff', async () => {
       const res = await callApi('GET', '/health');
       expect(res.status).toBe(200);
-      expect(res.headers['x-content-type-options']).toBe('nosniff');
-      expect(res.headers['x-frame-options']).toBe('DENY');
-      expect(res.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
-      expect(res.headers['strict-transport-security']).toContain('max-age=31536000');
-      expect(res.headers['content-security-policy']).toContain("default-src 'self'");
+      expect(header(res, 'x-content-type-options')).toBe('nosniff');
+      expect(header(res, 'x-frame-options')).toBe('DENY');
+      expect(header(res, 'referrer-policy')).toBe('strict-origin-when-cross-origin');
+      expect(header(res, 'strict-transport-security')).toContain('max-age=31536000');
+      expect(header(res, 'content-security-policy')).toContain("default-src 'self'");
     });
   });
 });
