@@ -8,7 +8,7 @@
     "build": "vite build",
     "start": "tsx server/index.ts",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json",
     "format": "oxfmt",
     "test": "vitest run --fileParallelism=false",
     "test:integration": "vitest run tests/integration-database.test.ts",

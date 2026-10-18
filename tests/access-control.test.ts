@@ -10,7 +10,7 @@ describe('ExamVault Access Control (RBAC) & Security Rules', () => {
     email: 'abenezer@example.com',
     phone: '+251911234821',
     role: 'STUDENT',
-    departmentId: 'dept-it',
+    programId: 'prog-it',
     currentYear: 3,
   };
 
@@ -21,7 +21,7 @@ describe('ExamVault Access Control (RBAC) & Security Rules', () => {
     email: 'verifier@examvault.edu.et',
     phone: '+251911000002',
     role: 'PAYMENT_VERIFIER',
-    departmentId: null,
+    programId: null,
     currentYear: null,
   };
 
@@ -32,7 +32,7 @@ describe('ExamVault Access Control (RBAC) & Security Rules', () => {
     email: 'content@examvault.edu.et',
     phone: '+251911000003',
     role: 'CONTENT_MANAGER',
-    departmentId: null,
+    programId: null,
     currentYear: null,
   };
 
@@ -43,7 +43,7 @@ describe('ExamVault Access Control (RBAC) & Security Rules', () => {
     email: 'admin@examvault.edu.et',
     phone: '+251911000001',
     role: 'ADMIN',
-    departmentId: null,
+    programId: null,
     currentYear: null,
   };
 

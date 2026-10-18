@@ -80,13 +80,13 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
     natProg = await prisma.program.upsert({
       where: { campusId_code: { campusId: campus.id, code: 'NAT_SCI' } },
       update: {},
-      create: { campusId: campus.id, code: 'NAT_SCI', name: 'Natural Science Stream', type: ProgramType.NATURAL_SCIENCE },
+      create: { campusId: campus.id, code: 'NAT_SCI', name: 'Natural Science Stream', type: ProgramType.STREAM },
     });
 
     socProg = await prisma.program.upsert({
       where: { campusId_code: { campusId: campus.id, code: 'SOC_SCI' } },
       update: {},
-      create: { campusId: campus.id, code: 'SOC_SCI', name: 'Social Science Stream', type: ProgramType.SOCIAL_SCIENCE },
+      create: { campusId: campus.id, code: 'SOC_SCI', name: 'Social Science Stream', type: ProgramType.STREAM },
     });
 
     const termY1S1 = await prisma.term.upsert({
