@@ -131,9 +131,16 @@ The storage adapter automatically activates Cloudflare R2/S3 storage while keepi
    ```
 3. **Run Production Server**:
    ```bash
-   npm run preview
+   npm start
    ```
-   *In production, security headers (`HSTS`, `CSP`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`), secure cookies (`HttpOnly; Secure; SameSite=Strict`), and strict rate limiting are automatically active.*
+   `npm start` runs `server/index.ts`, which serves the built SPA from `dist/` **and** every `/api/*` route from one process, applies security headers (`HSTS`, `CSP`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`), and shuts down gracefully on `SIGTERM`/`SIGINT`.
+
+   > `npm run preview` (`vite preview`) is a **local accessibility check only**. It is not a production server: it runs a single unclustered process with no TLS and never sets `NODE_ENV=production`, so secure cookies and the production-only fail-fast checks stay disabled.
+
+   Before starting, set `NODE_ENV=production` (the production entrypoint does this by default) and confirm:
+   - `SESSION_SECRET` is a real 32+ character random value (startup aborts otherwise).
+   - `STORAGE_PROVIDER` is `local`, or `r2`/`s3` **with** real credentials (startup aborts otherwise).
+   - `ALLOW_ACTOR_IMPERSONATION` is unset or `"false"`.
 
 ---
 
