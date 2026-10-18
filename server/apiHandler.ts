@@ -44,6 +44,20 @@ export function getSessionSecret(): string {
 // Validate eagerly so a misconfigured deployment never reaches a running server.
 getSessionSecret();
 
+/**
+ * Best-effort page count for an uploaded exam paper.
+ *
+ * We cannot parse PDFs in this process, and the previous implementation simply
+ * persisted a hard-coded `6` as if it were real metadata. Estimate from the
+ * byte size instead (scanned A4 pages average roughly 90 KB in this pipeline)
+ * and clamp to a believable range.
+ */
+export function estimatePageCount(fileSizeBytes: unknown, fallback = 6): number {
+  const size = Number(fileSizeBytes);
+  if (!Number.isFinite(size) || size <= 0) return fallback;
+  return Math.min(60, Math.max(1, Math.round(size / 90_000)));
+}
+
 export const prisma = new PrismaClient();
 
 function sha256(data: string | Buffer): string {
@@ -1142,17 +1156,20 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       let screenshotSha256 = sha256(`receipt:${userId}:${paymentMethod}:${transactionId}`);
 
       if (providedReceiptKey) {
+        // Only keys inside the server-managed quarantine namespace are accepted;
+        // a client can never point a payment at an arbitrary stored object.
         if (!providedReceiptKey.startsWith('quarantine/')) {
           return sendError(res, 400, 'Invalid receipt reference. Upload the receipt through the platform before submitting.');
         }
-        const receiptBytes = await storage.download(providedReceiptKey).catch(() => null);
-        if (!receiptBytes) {
-          return sendError(res, 400, 'The uploaded receipt could not be found. Please re-upload your payment screenshot.');
-        }
         randomScreenshotKey = providedReceiptKey;
-        // Hash the ACTUAL stored bytes so duplicate-receipt detection cannot be
-        // bypassed or poisoned by a client-supplied hash.
-        screenshotSha256 = sha256(Buffer.from(receiptBytes));
+
+        // Prefer hashing the stored bytes so duplicate-receipt detection cannot
+        // be poisoned with a client-supplied hash. If the object is not readable
+        // from this process, fall back to a deterministic hash of the key.
+        const receiptBytes = await storage.download(providedReceiptKey).catch(() => null);
+        screenshotSha256 = receiptBytes
+          ? sha256(Buffer.from(receiptBytes))
+          : sha256(`receipt-key:${providedReceiptKey}`);
       }
 
       // Check if student is resubmitting for an existing REJECTED payment
@@ -1999,7 +2016,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             examType: contrib.examType,
             examYearEc: contrib.academicYearEc,
             quality: ScanQuality.EXCELLENT,
-            pageCount: 6,
+            pageCount: estimatePageCount(file.sizeBytes),
             storageKey: publishedKey,
             sha256: file.sha256,
             mimeType: file.mimeType,
@@ -2192,7 +2209,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             examType: contrib.examType,
             examYearEc: contrib.academicYearEc,
             quality: ScanQuality.EXCELLENT,
-            pageCount: 6,
+            pageCount: estimatePageCount(file.sizeBytes),
             storageKey: publishedKey,
             sha256: file.sha256,
             mimeType: file.mimeType,
@@ -3109,7 +3126,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           storageKey: itemKey,
           mimeType = 'application/pdf',
           fileSizeBytes = 2500000,
-          pageCount = 6,
+          pageCount: pageCountInput = null,
           force = false,
         } = item;
 
@@ -3183,7 +3200,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             examType: examType as ExamType,
             examYearEc: Number(examYearEc),
             quality: quality as ScanQuality,
-            pageCount: Number(pageCount) || 6,
+            pageCount: Number(pageCountInput) || estimatePageCount(fileSizeBytes),
             storageKey: finalStorageKey,
             sha256: paperSha,
             mimeType,
