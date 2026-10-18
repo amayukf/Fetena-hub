@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef, useEffect, type ReactNode, type ChangeEvent } from "react";
 import theme from "./tokens/theme";
-import { api, type BootstrapData } from "./lib/api";
+import { api, setUnauthorizedHandler, type BootstrapData } from "./lib/api";
 import {
   INITIAL_USERS,
   INITIAL_PAYMENTS,
@@ -3077,6 +3077,19 @@ export default function App() {
   const [notifyContact, setNotifyContact] = useState("");
   const [notifyChannel, setNotifyChannel] = useState<"TELEGRAM" | "SMS" | "EMAIL">("TELEGRAM");
   const [notifySubmitted, setNotifySubmitted] = useState(false);
+
+  // Central session-expiry handling: when any API call reports a 401, drop the
+  // local auth state and return to sign-in instead of stranding the user on a
+  // screen showing raw error strings.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setCurrentUser(null);
+      currentUserRef.current = null;
+      setUnlockedSemesters(new Set());
+      setScreen("login");
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
 
   const go = (s: Screen) => {
     setScreen(s);
