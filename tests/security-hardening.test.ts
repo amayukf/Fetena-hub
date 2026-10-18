@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Role, PaymentMethod, ProgramType } from '@prisma/client';
-import { handleApiRequest, prisma, estimatePageCount } from '../server/apiHandler';
+import { handleApiRequest, prisma } from '../server/apiHandler';
 import { generateCompressedPageBuffer } from '../src/lib/pageCompressor';
+import { estimatePageCount } from '../src/lib/pageCount';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';

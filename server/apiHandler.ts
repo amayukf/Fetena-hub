@@ -13,11 +13,8 @@ import {
   signStreamTicket,
   verifyStreamTicket,
 } from '../src/lib/storage';
-import {
-  generateCompressedPageBuffer,
-  convertAndStoreCompressedPages,
-} from '../src/lib/pageCompressor';
 import { dispatchNotification } from '../src/lib/notifications';
+import { estimatePageCount } from '../src/lib/pageCount';
 import type { StreamCode } from '../src/types';
 
 // -------------------------------------------------------------
@@ -43,20 +40,6 @@ export function getSessionSecret(): string {
 
 // Validate eagerly so a misconfigured deployment never reaches a running server.
 getSessionSecret();
-
-/**
- * Best-effort page count for an uploaded exam paper.
- *
- * We cannot parse PDFs in this process, and the previous implementation simply
- * persisted a hard-coded `6` as if it were real metadata. Estimate from the
- * byte size instead (scanned A4 pages average roughly 90 KB in this pipeline)
- * and clamp to a believable range.
- */
-export function estimatePageCount(fileSizeBytes: unknown, fallback = 6): number {
-  const size = Number(fileSizeBytes);
-  if (!Number.isFinite(size) || size <= 0) return fallback;
-  return Math.min(60, Math.max(1, Math.round(size / 90_000)));
-}
 
 export const prisma = new PrismaClient();
 
@@ -2872,6 +2855,14 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
 
     // -------------------------------------------------------------
     // GET /api/papers/:id/pages/:pageNum - Authenticated Compressed Page Image
+    //
+    // NOT IMPLEMENTED. The per-page assets this route looks for under
+    // `published/<paperId>/pages/` are never produced: `convertAndStoreCompressedPages`
+    // (src/lib/pageCompressor.ts) generates *placeholder* exam content rather than
+    // rendering the paper's real PDF, so it is deliberately not wired into the
+    // publish flow. Until real page rendering exists, this route returns 404 for
+    // every paper and callers should use the signed stream endpoint
+    // (`/api/papers/:id/stream`), which serves the actual stored file.
     // -------------------------------------------------------------
     if (pathname.startsWith('/api/papers/') && pathname.includes('/pages/') && method === 'GET') {
       const parts = pathname.split('/');
