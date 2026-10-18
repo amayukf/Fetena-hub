@@ -48,7 +48,7 @@ describe('STEP 9: Manual Payment Flow & Real Data Verification', () => {
 
     // 2. Campus & Program & Term
     campus = await prisma.campus.create({
-      data: { code: 'WOLISO', name: 'Ambo University - Woliso Campus', isActive: true },
+      data: { code: 'WOLISO', name: 'Ambo University', isActive: true },
     });
 
     program = await prisma.program.create({

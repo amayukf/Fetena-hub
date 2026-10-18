@@ -292,7 +292,7 @@ function Shell({
           <>
             <span>STUDENT PORTAL</span>
             <strong>{currentUser.stream === "SOC_SCI" ? "Social Science" : "Natural Science"} · Year 1</strong>
-            <small style={{ color: "var(--muted)", fontSize: "0.75rem" }}>Woliso Campus</small>
+            <small style={{ color: "var(--muted)", fontSize: "0.75rem" }}>Ambo University</small>
           </>
         )}
       </div>
@@ -435,7 +435,7 @@ function Landing({
       </div>
     </section>
     <section className="social-proof">
-      <p>Helping students study with confidence across Woliso Campus</p>
+      <p>Helping students study with confidence across Ambo University</p>
       <div>
         <strong>2</strong><span>Academic Streams</span>
         {coursesCount > 0 && <><strong>{coursesCount}</strong><span>Courses covered</span></>}
@@ -515,7 +515,7 @@ function Landing({
         <button onClick={() => go("contact")}>Contact</button>
         <button onClick={() => go("admin-login")} style={{ fontWeight: 600, color: "var(--primary)" }}>Staff Portal</button>
       </div>
-      <small>© 2026 ExamVault · Ambo University, Woliso Campus</small>
+      <small>© 2026 ExamVault · Ambo University</small>
     </footer>
   </div>;
 }
@@ -625,14 +625,14 @@ function Auth({
         <Heading level={1}>{admin ? "Manage the library that helps students succeed." : "Everything you need to prepare, in one place."}</Heading>
         <p>{admin ? "Authorized staff only. Role-based access control and audit logging active." : "Access organized, quality-checked exam papers from any device—even on a slow connection."}</p>
       </div>
-      <small>Ambo University · Woliso Campus</small>
+      <small>Ambo University</small>
     </div>
     <div className="auth-form">
       <div className="auth-mobile-logo"><Logo/></div>
       <Card>
         <button className="back-link" onClick={() => go("landing")}>← Back to home</button>
         <Heading level={2}>{signup ? "Create your student account" : admin ? "Admin sign in" : "Welcome back"}</Heading>
-        <p>{signup ? "Join Woliso Campus students preparing for Freshman examinations." : "Enter your credentials to continue to ExamVault."}</p>
+        <p>{signup ? "Join Ambo University students preparing for Freshman examinations." : "Enter your credentials to continue to ExamVault."}</p>
 
         {error && (
           <div className="alert danger" style={{ margin: "14px 0" }}>
@@ -769,7 +769,7 @@ function Dashboard({
 
   return <>
     <PageHead
-      eyebrow="AMBO UNIVERSITY — WOLISO CAMPUS"
+      eyebrow="AMBO UNIVERSITY"
       title={`Good morning, ${currentUser.fullName.split(" ")[0]}.`}
       text={`Freshman ${streamLabel} · Year 1 exam preparation`}
     />
@@ -873,7 +873,7 @@ function Browse({
 
   return <>
     <PageHead
-      eyebrow="AMBO UNIVERSITY — WOLISO CAMPUS"
+      eyebrow="AMBO UNIVERSITY"
       title="Freshman Exam Vault"
       text="Find previous exam papers for your freshman stream (Natural Science or Social Science)."
     />
@@ -898,7 +898,7 @@ function Browse({
           </Heading>
           <p>
             {step === 1
-              ? "Ambo University - Woliso Campus freshman curriculum is organized into two primary streams."
+              ? "Ambo University freshman curriculum is organized into two primary streams."
               : `Showing Year 1 terms for ${selectedStream === "NAT_SCI" ? "Natural Science" : "Social Science"}.`}
           </p>
         </div>
@@ -1034,7 +1034,7 @@ function Semester({
   return <>
     <button className="back-link page-back" onClick={() => go("browse")}>← Back to stream selection</button>
     <PageHead
-      eyebrow="AMBO UNIVERSITY — WOLISO CAMPUS"
+      eyebrow="AMBO UNIVERSITY"
       title={`${streamLabel} · Year 1, Semester 1`}
       text="7 courses (3 shared between Natural Science & Social Science) · Verified past exam papers"
     />
@@ -1068,7 +1068,7 @@ function Semester({
         <div>
           <Badge tone="warning">PAYMENT UNDER REVIEW</Badge>
           <Heading level={2}>Verification in Progress</Heading>
-          <p>Your payment receipt (Ref: <b>{pendingPayment.referenceCode}</b>) is queued for verification by Woliso Campus staff.</p>
+          <p>Your payment receipt (Ref: <b>{pendingPayment.referenceCode}</b>) is queued for verification by Ambo University staff.</p>
           <div className="unlock-points">
             <span><Icon name="clock"/>Verification SLA: Within {settings.paymentVerificationSlaHours || "2"} hours</span>
             <span><Icon name="check"/>Transaction ID: <code>{pendingPayment.transactionId}</code></span>
@@ -1182,7 +1182,7 @@ function Course({
     <PageHead
       eyebrow={`${course.code} · ${course.creditHours} CREDIT HOURS`}
       title={course.title}
-      text={course.isShared ? "Shared course taken by both Natural Science and Social Science students." : "Freshman stream course · Ambo University Woliso Campus."}
+      text={course.isShared ? "Shared course taken by both Natural Science and Social Science students." : "Freshman stream course · Ambo University."}
       action={course.isShared ? <Badge tone="accent">SHARED COURSE</Badge> : undefined}
     />
     <div className="filter-row">
@@ -1262,8 +1262,11 @@ function Course({
 function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUser: UserSession; paper?: StoreExamPaper | null }) {
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(100);
-  const [accessState, setAccessState] = useState<{ allowed: boolean; reason?: string; watermark?: any; streamUrl?: string; expiresAt?: number } | null>(null);
+  const [accessState, setAccessState] = useState<{ allowed: boolean; reason?: string; pageCount?: number } | null>(null);
   const [checkingAccess, setCheckingAccess] = useState(true);
+  const [pageLoading, setPageLoading] = useState(true);
+  const [pageLoadError, setPageLoadError] = useState(false);
+  const [pageRequestVersion, setPageRequestVersion] = useState(0);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportCategory, setReportCategory] = useState("BLURRY_SCAN");
   const [reportNotes, setReportNotes] = useState("");
@@ -1271,40 +1274,36 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
   const [reportFeedback, setReportFeedback] = useState<string | null>(null);
 
   useEffect(() => {
+    let current = true;
+    setCheckingAccess(true);
+    setAccessState(null);
+    setPage(1);
     if (!paper) {
       setCheckingAccess(false);
-      return;
+      return () => { current = false; };
     }
     api.checkPaperAccess(paper.id, currentUser.userId)
       .then((res) => {
-        setAccessState(res);
-        setCheckingAccess(false);
+        if (current) {
+          setAccessState(res);
+          setCheckingAccess(false);
+        }
       })
       .catch(() => {
-        setAccessState({ allowed: false, reason: "NETWORK_ERROR" });
-        setCheckingAccess(false);
+        if (current) {
+          setAccessState({ allowed: false, reason: "NETWORK_ERROR" });
+          setCheckingAccess(false);
+        }
       });
+    return () => { current = false; };
   }, [paper?.id, currentUser.userId]);
 
-  // Silently refresh stream token 5 minutes before expiry during extended reading
   useEffect(() => {
-    if (!paper) return;
-    const interval = setInterval(() => {
-      if (accessState?.expiresAt && Date.now() > accessState.expiresAt - 300000) {
-        api.checkPaperAccess(paper.id, currentUser.userId).then((res) => {
-          if (res.allowed) setAccessState(res);
-        }).catch(() => {});
-      }
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [paper?.id, currentUser.userId, accessState?.expiresAt]);
+    setPageLoading(true);
+    setPageLoadError(false);
+  }, [paper?.id, page, pageRequestVersion]);
 
-  const totalPages = paper?.pageCount || 6;
-  const studentName = accessState?.watermark?.studentName || currentUser.fullName || "ExamVault Student";
-  const studentId = accessState?.watermark?.studentId || currentUser.studentId || "AMU-2026-0042";
-  const dateStr = accessState?.watermark?.timestamp
-    ? new Date(accessState.watermark.timestamp).toISOString().split("T")[0]
-    : new Date().toISOString().split("T")[0];
+  const totalPages = accessState?.pageCount || paper?.pageCount || 1;
 
   const handleReportProblem = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1316,7 +1315,7 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
         category: reportCategory,
         description: reportNotes,
       });
-      setReportFeedback("Thank you! Your report has been submitted to the Woliso Campus exam review board.");
+      setReportFeedback("Thank you! Your report has been submitted to the Ambo University exam review board.");
       setTimeout(() => {
         setShowReportModal(false);
         setReportFeedback(null);
@@ -1357,7 +1356,7 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
   }
 
   // Access Denied / Locked Paper Guard
-  if (!checkingAccess && accessState && !accessState.allowed && !paper?.isFreeSample) {
+  if (!checkingAccess && accessState && !accessState.allowed) {
     return (
       <div className="standalone-state">
         <Logo/>
@@ -1394,7 +1393,7 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
           <Button variant="ghost" onClick={() => go("course")}><Icon name="close"/></Button>
           <span>
             <strong>{paper ? paper.title : "Exam Paper"}</strong>
-            <small>{paper ? `${paper.courseCode} · ${paper.pageCount} pages` : "FLEn 1011 · 6 pages"} · Protected Tiled Watermark Viewer</small>
+            <small>{paper ? `${paper.courseCode} · ${totalPages} pages` : "Protected Watermarked Viewer"} · Server-rendered pages</small>
           </span>
         </div>
         <div className="viewer-tools">
@@ -1418,79 +1417,46 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
           style={{
             position: "relative",
             width: `min(100%, ${Math.round(820 * (zoom / 100))}px)`,
-            minHeight: "920px",
-            height: "calc(100vh - 160px)",
+            minHeight: "calc(100vh - 160px)",
             background: "#ffffff",
             boxShadow: "0 10px 50px rgba(0,0,0,.4)",
             borderRadius: "4px",
             overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
           }}
         >
-          {/* Dynamic Watermark Tiled Across Each Page */}
-          <div
-            className="watermark-tiled"
-            aria-hidden="true"
-            style={{
-              position: "absolute",
-              inset: 0,
-              pointerEvents: "none",
-              userSelect: "none",
-              display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
-              gridTemplateRows: "repeat(5, 1fr)",
-              gap: "24px",
-              padding: "30px 15px",
-              opacity: 0.14,
-              zIndex: 10,
-              overflow: "hidden",
-            }}
-          >
-            {Array.from({ length: 15 }).map((_, i) => (
-              <div
-                key={i}
-                style={{
-                  transform: "rotate(-25deg)",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  textAlign: "center",
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  color: "var(--primary, #0c4a34)",
-                  lineHeight: 1.25,
-                  letterSpacing: "0.04em",
-                  textTransform: "uppercase",
-                }}
-              >
-                <span>{studentName}</span>
-                <span>{studentId}</span>
-                <span>{dateStr}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Real PDF or Authenticated Page Stream */}
-          {accessState?.streamUrl ? (
-            <iframe
-              key={`${paper?.id}-${page}-${accessState.expiresAt}`}
-              src={`${accessState.streamUrl}#page=${page}&toolbar=0&navpanes=0`}
-              title={paper?.title || "Exam Paper Preview"}
-              style={{
-                width: "100%",
-                height: "100%",
-                flex: 1,
-                border: "none",
-                display: "block",
-                background: "#ffffff",
+          {checkingAccess ? (
+            <div style={{ minHeight: "calc(100vh - 160px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted)", padding: "40px" }}>
+              <Icon name="clock" size={32} />
+              <p style={{ marginTop: "12px" }}>Loading protected page...</p>
+            </div>
+          ) : pageLoadError ? (
+            <div style={{ minHeight: "calc(100vh - 160px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted)", padding: "40px", textAlign: "center" }}>
+              <Icon name="help" size={32} />
+              <p style={{ marginTop: "12px" }}>This page could not be loaded. Your access may have expired or the paper may be unavailable.</p>
+              <Button variant="secondary" onClick={() => setPageRequestVersion((version) => version + 1)}>Retry page</Button>
+            </div>
+          ) : paper && accessState?.allowed ? (
+            <img
+              key={`${paper.id}-${page}-${pageRequestVersion}`}
+              src={`/api/papers/${encodeURIComponent(paper.id)}/pages/${page}`}
+              alt={`${paper.title}, page ${page}`}
+              draggable={false}
+              onLoad={() => setPageLoading(false)}
+              onError={() => {
+                setPageLoading(false);
+                setPageLoadError(true);
               }}
+              style={{ width: "100%", height: "auto", display: "block", userSelect: "none" }}
             />
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, color: "var(--muted)", padding: "40px" }}>
+            <div style={{ minHeight: "calc(100vh - 160px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted)", padding: "40px" }}>
               <Icon name="clock" size={32} />
-              <p style={{ marginTop: "12px" }}>Loading examination document stream...</p>
+              <p style={{ marginTop: "12px" }}>No paper is selected.</p>
+            </div>
+          )}
+          {pageLoading && !checkingAccess && !pageLoadError && accessState?.allowed && (
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", pointerEvents: "none" }}>
+              <Icon name="clock" size={32} />
             </div>
           )}
         </div>
@@ -1511,7 +1477,7 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
               <button className="icon-btn" onClick={() => setShowReportModal(false)}><Icon name="close"/></button>
             </div>
             <p style={{ color: "var(--muted)", margin: "8px 0 16px", fontSize: "14px" }}>
-              Help improve the ExamVault archive for Woliso Campus. Let our content moderators know what is wrong with this paper.
+              Help improve the ExamVault archive for Ambo University. Let our content moderators know what is wrong with this paper.
             </p>
             {reportFeedback ? (
               <div style={{ padding: "16px", background: "rgba(12, 74, 52, 0.08)", borderRadius: "8px", color: "var(--primary)" }}>
@@ -1665,7 +1631,7 @@ function Checkout({
           <Badge tone="warning">PAYMENT UNDER REVIEW</Badge>
           <Heading level={1}>Payment Already Submitted</Heading>
           <p>
-            You already have a pending payment for {streamLabel}, Year 1, Semester 1 awaiting review by Woliso Campus staff.
+            You already have a pending payment for {streamLabel}, Year 1, Semester 1 awaiting review by Ambo University staff.
             To prevent duplicate charges, only one pending payment is allowed per semester.
           </p>
           <div className="alert info" style={{ background: "rgba(12, 74, 52, 0.08)", color: "var(--primary)", margin: "14px 0" }}>
@@ -1757,7 +1723,7 @@ function Checkout({
     </header>
     <main>
       <button className="back-link" onClick={() => go("semester")}>← Back to semester</button>
-      <PageHead eyebrow="AMBO UNIVERSITY — WOLISO CAMPUS" title="Unlock your semester" text={`Unlock all 7 courses for ${streamLabel}, Year 1, Semester 1.`}/>
+      <PageHead eyebrow="AMBO UNIVERSITY" title="Unlock your semester" text={`Unlock all 7 courses for ${streamLabel}, Year 1, Semester 1.`}/>
       
       <div className="checkout-grid">
         <form onSubmit={handleSubmit}>
@@ -1809,20 +1775,20 @@ function Checkout({
             <div className="alert info" style={{ marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px", background: "rgba(12, 74, 52, 0.08)", color: "var(--primary)" }}>
               <Icon name="clock" size={18}/>
               <span>
-                <strong>Verification SLA:</strong> Payments are verified within {settings.paymentVerificationSlaHours || "2"} hours by Woliso Campus staff.
+                <strong>Verification SLA:</strong> Payments are verified within {settings.paymentVerificationSlaHours || "2"} hours by Ambo University staff.
               </span>
             </div>
             <div className="instruction-box">
-              <strong>Transfer {settings.semesterPriceEtb || 50} ETB to Ambo University Woliso Campus</strong>
+              <strong>Transfer {settings.semesterPriceEtb || 50} ETB to Ambo University</strong>
               {method === "TELEBIRR" ? (
                 <>
                   <span>Telebirr receiver number: <b>{settings.telebirrPhone?.trim() || "[Admin: Set TELEBIRR_RECEIVER_PHONE in Settings]"}</b></span>
-                  <span>Recipient name: <b>{settings.telebirrRecipientName?.trim() || "Ambo University Woliso Campus"}</b></span>
+                  <span>Recipient name: <b>{settings.telebirrRecipientName?.trim() || "Ambo University"}</b></span>
                 </>
               ) : method === "CBE_BIRR" ? (
                 <>
                   <span>CBE account number: <b>{settings.cbeAccountNumber?.trim() || "[Admin: Set CBE_ACCOUNT_NUMBER in Settings]"}</b></span>
-                  <span>Account name: <b>{settings.cbeRecipientName?.trim() || "Ambo University Woliso Campus"}</b></span>
+                  <span>Account name: <b>{settings.cbeRecipientName?.trim() || "Ambo University"}</b></span>
                 </>
               ) : (
                 <>
@@ -1938,7 +1904,7 @@ function Payments({ payments, settings, go }: { payments: StorePayment[]; settin
     <div className="alert info" style={{ marginBottom: "16px", display: "flex", alignItems: "center", gap: "8px", background: "rgba(12, 74, 52, 0.08)", color: "var(--primary)" }}>
       <Icon name="clock" size={18}/>
       <span>
-        <strong>Verification SLA:</strong> Payments are verified within {settings?.paymentVerificationSlaHours || "2"} hours by Woliso Campus staff.
+        <strong>Verification SLA:</strong> Payments are verified within {settings?.paymentVerificationSlaHours || "2"} hours by Ambo University staff.
       </span>
     </div>
     <div className="stats-row">
@@ -2008,7 +1974,7 @@ function Payments({ payments, settings, go }: { payments: StorePayment[]; settin
           <div className="modal-head">
             <div>
               <span className="eyebrow">OFFICIAL RECEIPT</span>
-              <Heading level={2}>Ambo University Woliso Campus</Heading>
+              <Heading level={2}>Ambo University</Heading>
             </div>
             <Button variant="ghost" onClick={() => setSelectedReceipt(null)}><Icon name="close"/></Button>
           </div>
@@ -2278,7 +2244,7 @@ function Requests({
           <Button onClick={async () => {
             try {
               await onSubmitRequest(reqCourseCode, reqExamType, reqExamYear, reqNotes);
-              setSubmittedMessage("Paper request registered with Woliso Campus moderators.");
+              setSubmittedMessage("Paper request registered with Ambo University moderators.");
               setReqNotes("");
             } catch (err: any) {
               setError(err.message || "Failed to submit request");
@@ -2465,7 +2431,7 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
         <Badge tone="success">VERIFIED {currentUser.role.replace("_", " ")}</Badge>
         <hr/>
         <span>ID: {currentUser.studentId || "AMU-STUDENT"}</span>
-        <span>Woliso Campus · Ambo University</span>
+        <span>Ambo University</span>
 
         {currentUser.role !== "STUDENT" && (
           <div style={{ marginTop: "16px", width: "100%" }}>
@@ -2490,7 +2456,7 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
           </div>
           <Input label="Email address" placeholder={currentUser.email || "Not set"} disabled/>
           <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0 0" }}>
-            To update university records or student ID, please visit the Woliso Campus Registrar.
+            To update university records or student ID, please visit the Ambo University Registrar.
           </p>
         </Card>
 
@@ -2528,7 +2494,7 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
             <Icon name="user"/>
             <span>
               <strong>Web Browser Session</strong>
-              <small>Woliso, Ethiopia · Active authenticated session</small>
+              <small>Ambo, Ethiopia · Active authenticated session</small>
             </span>
             <Badge tone="success">THIS DEVICE</Badge>
           </div>
@@ -2815,7 +2781,7 @@ function AdminTable({
     <PageHead
       eyebrow="ADMINISTRATION"
       title={type === "papers" ? "Exam papers library" : type === "users" ? "Users & access roles" : "Student paper requests"}
-      text={type === "papers" ? "Manage, organize, and publish the exam paper library." : type === "users" ? "Manage student and staff roles across Woliso campus." : "Track student paper requests to prioritize acquisitions."}
+      text={type === "papers" ? "Manage, organize, and publish the exam paper library." : type === "users" ? "Manage student and staff roles across Ambo University." : "Track student paper requests to prioritize acquisitions."}
       action={<Button icon="plus">{type === "papers" ? "Upload paper" : type === "users" ? "Add staff member" : "Export requests"}</Button>}
     />
     <Card className="table-card">
@@ -2884,7 +2850,7 @@ function Structure({
 
   return <>
     <PageHead
-      eyebrow="AMBO UNIVERSITY — WOLISO CAMPUS"
+      eyebrow="AMBO UNIVERSITY"
       title="Curriculum & Coverage Structure"
       text="Manage freshman streams, Year 1 semesters, courses, and exam coverage completeness."
     />
@@ -2937,7 +2903,7 @@ function Structure({
             <div>
               <span className="eyebrow">STREAM</span>
               <Heading level={2}>{activeStream === "NAT_SCI" ? "Natural Science" : "Social Science"}</Heading>
-              <p>Ambo University - Woliso Campus · Year 1 Freshman Curriculum</p>
+              <p>Ambo University · Year 1 Freshman Curriculum</p>
             </div>
             <Badge tone="accent">STREAM</Badge>
           </div>
@@ -3071,6 +3037,12 @@ export default function App() {
   const [reviewingContribution, setReviewingContribution] = useState<StoreContribution | null>(null);
   const [payoutInput, setPayoutInput] = useState("100");
   const [payoutTxInput, setPayoutTxInput] = useState("");
+  const canReviewContribution = Boolean(reviewingContribution && (
+    reviewingContribution.status === "SUBMITTED" ||
+    reviewingContribution.status === "IN_REVIEW" ||
+    reviewingContribution.status === "CHANGES_REQUESTED" ||
+    reviewingContribution.status === "OFFER_MADE"
+  ));
 
   // Notify Me Modal for Semester 2 (Coming Soon)
   const [notifyModalOpen, setNotifyModalOpen] = useState(false);
@@ -3679,7 +3651,6 @@ export default function App() {
     if (!currentUser) return;
     try {
       let storageKey: string | undefined;
-      let fileSha256: string | undefined;
 
       if (c.fileBase64) {
         let detectedMime = c.mimeType || 'application/pdf';
@@ -3694,7 +3665,6 @@ export default function App() {
 
         const uploadRes = await api.uploadFile(c.fileBase64, detectedMime, 'contribution');
         storageKey = uploadRes.storageKey;
-        fileSha256 = uploadRes.sha256;
       }
 
       const matchedCourse = courses.find(
@@ -3715,8 +3685,6 @@ export default function App() {
         studentNotes: c.notes,
         fileName: c.fileName,
         storageKey,
-        sha256: fileSha256,
-        fileBase64: c.fileBase64,
       });
       await refreshDatabaseData();
       alert("Paper submitted successfully to Admin verification queue.");
@@ -3728,21 +3696,51 @@ export default function App() {
 
   const handleApproveContribution = async (contribId: string) => {
     if (!currentUser) return;
-    const amount = parseFloat(payoutInput) || 100;
-    const tx = payoutTxInput.trim() || `TB_PAYOUT_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+    const amount = Number(payoutInput);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1000) {
+      alert("Enter an approved payout amount greater than 0 and no more than 1000 ETB.");
+      return;
+    }
 
     try {
       await api.approveContribution({
         contributionId: contribId,
         approvedPayoutEtb: amount,
-        payoutTxId: tx,
         reviewerId: currentUser.userId,
       });
       setReviewingContribution(null);
       await refreshDatabaseData();
-      alert("Buyout approved! Student payout marked settled and paper published to library.");
+      alert("Paper approved and published. The student payout remains pending until the transfer is recorded.");
     } catch (err: any) {
       alert(err.message || "Failed to approve contribution buyout");
+    }
+  };
+
+  const handlePublishContribution = async (contribId: string) => {
+    try {
+      await api.publishContribution(contribId);
+      setReviewingContribution(null);
+      await refreshDatabaseData();
+      alert("Accepted paper published. Payout is now ready to be recorded after transfer.");
+    } catch (err: any) {
+      alert(err.message || "Failed to publish contribution");
+    }
+  };
+
+  const handlePayoutContribution = async (contribId: string) => {
+    const transferReference = payoutTxInput.trim();
+    if (!transferReference) {
+      alert("Enter the transfer reference after the payout has been sent.");
+      return;
+    }
+    try {
+      await api.payoutContribution(contribId, transferReference);
+      setReviewingContribution(null);
+      setPayoutTxInput("");
+      await refreshDatabaseData();
+      alert("Payout recorded as settled.");
+    } catch (err: any) {
+      alert(err.message || "Failed to record contribution payout");
     }
   };
 
@@ -3875,7 +3873,7 @@ export default function App() {
       <div className="standalone-state" style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center" }}>
           <Logo/>
-          <p style={{ marginTop: "16px", color: "var(--muted)" }}>Connecting to ExamVault Woliso archive...</p>
+          <p style={{ marginTop: "16px", color: "var(--muted)" }}>Connecting to ExamVault archive...</p>
         </div>
       </div>
     );
@@ -4345,43 +4343,60 @@ export default function App() {
                 </div>
               )}
 
-              <div className="form-grid">
-                <Input
-                  label="Approved buyout payout (ETB)"
-                  placeholder="100"
-                  value={payoutInput}
-                  onChange={e => setPayoutInput(e.target.value)}
-                />
-                <Input
-                  label="Payout mobile money Tx ID"
-                  placeholder="TB_PAYOUT_8892"
-                  value={payoutTxInput}
-                  onChange={e => setPayoutTxInput(e.target.value)}
-                />
-              </div>
-
-              <div className="alert success">
-                <Icon name="check"/>
-                <span>
-                  <strong>Publish to Catalog:</strong>
-                  <small>Paper will be verified, added to the freshman course collection, and student payout marked settled.</small>
-                </span>
-              </div>
+              {canReviewContribution ? (
+                <>
+                  <Input
+                    label="Approved buyout payout (ETB)"
+                    placeholder="100"
+                    value={payoutInput}
+                    onChange={e => setPayoutInput(e.target.value)}
+                  />
+                  <div className="alert success">
+                    <Icon name="check"/>
+                    <span>
+                      <strong>Approve and publish:</strong>
+                      <small>The paper will be added to the archive. Payout remains pending until the transfer is recorded.</small>
+                    </span>
+                  </div>
+                </>
+              ) : reviewingContribution.status === "ACCEPTED" ? (
+                <div className="alert success">
+                  <Icon name="check"/>
+                  <span><strong>Accepted for publication.</strong><small>Publishing makes it available in the archive and queues the approved payout.</small></span>
+                </div>
+              ) : reviewingContribution.status === "PUBLISHED" ? (
+                <>
+                  <Input
+                    label="Transfer reference (enter after sending payment)"
+                    placeholder="TB_PAYOUT_8892"
+                    value={payoutTxInput}
+                    onChange={e => setPayoutTxInput(e.target.value)}
+                  />
+                  <div className="alert success">
+                    <Icon name="check"/>
+                    <span><strong>Approved payout: {reviewingContribution.approvedPayoutEtb ?? reviewingContribution.proposedPayoutEtb} ETB.</strong><small>Record settlement only after the transfer is confirmed.</small></span>
+                  </div>
+                </>
+              ) : reviewingContribution.status === "PAID" ? (
+                <div className="alert success"><strong>Payout settled · {reviewingContribution.payoutTxId}</strong></div>
+              ) : (
+                <div className="alert warning"><strong>This contribution is no longer available for review.</strong></div>
+              )}
             </div>
             <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
               <div style={{ display: "flex", gap: "8px" }}>
-                <Button variant="danger" onClick={() => handleRejectContribution(reviewingContribution.id)}>
-                  Reject
-                </Button>
-                <Button variant="secondary" onClick={() => handleRequestBetterScan(reviewingContribution.id)}>
-                  Request Better Scan
-                </Button>
+                {canReviewContribution && (
+                  <>
+                    <Button variant="danger" onClick={() => handleRejectContribution(reviewingContribution.id)}>Reject</Button>
+                    <Button variant="secondary" onClick={() => handleRequestBetterScan(reviewingContribution.id)}>Request Better Scan</Button>
+                  </>
+                )}
               </div>
               <div style={{ display: "flex", gap: "8px" }}>
                 <Button variant="secondary" onClick={() => setReviewingContribution(null)}>Cancel</Button>
-                <Button onClick={() => handleApproveContribution(reviewingContribution.id)}>
-                  Approve Payout & Publish Paper
-                </Button>
+                {canReviewContribution && <Button onClick={() => handleApproveContribution(reviewingContribution.id)}>Approve & Publish (Payout Pending)</Button>}
+                {reviewingContribution.status === "ACCEPTED" && <Button onClick={() => handlePublishContribution(reviewingContribution.id)}>Publish & Queue Payout</Button>}
+                {reviewingContribution.status === "PUBLISHED" && <Button onClick={() => handlePayoutContribution(reviewingContribution.id)}>Record Settled Payout</Button>}
               </div>
             </div>
           </div>

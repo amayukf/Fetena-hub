@@ -259,7 +259,6 @@ export const api = {
   async approveContribution(data: {
     contributionId: string;
     approvedPayoutEtb: number;
-    payoutTxId: string;
     reviewerId?: string;
   }) {
     return request<any>(`/api/contributions/${data.contributionId}/approve`, {

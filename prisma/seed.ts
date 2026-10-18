@@ -9,8 +9,7 @@
  * That script refuses to run unless NODE_ENV !== 'production' AND the user
  * confirms interactively.
  */
-import { PrismaClient, Role, ProgramType } from '@prisma/client';
-import bcrypt from 'bcryptjs';
+import { PrismaClient, ProgramType } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -27,7 +26,7 @@ async function main() {
     { key: 'MAX_UPLOAD_SIZE_MB', value: '20', description: 'Maximum student contribution upload size in MB' },
     { key: 'MAX_SCREENSHOT_SIZE_MB', value: '5', description: 'Maximum payment screenshot upload size in MB' },
     { key: 'PAYMENT_VERIFICATION_SLA_HOURS', value: '2', description: 'Expected SLA in hours for payment verifiers' },
-    { key: 'ANNOUNCEMENT_BANNER', value: 'Ambo University Woliso Campus past exam papers archive is active.', description: 'Student portal banner text' },
+    { key: 'ANNOUNCEMENT_BANNER', value: 'Ambo University past exam papers archive is active.', description: 'Student portal banner text' },
     { key: 'ANNOUNCEMENT_ACTIVE', value: 'true', description: 'Whether the announcement banner is displayed' },
     { key: 'PAYMENT_INSTRUCTIONS', value: 'Transfer the exact semester unlock fee using Telebirr or CBE Birr. Include your Student ID in the transfer note and upload a clear screenshot of the receipt.', description: 'Instructions displayed to students at checkout' },
     { key: 'MAX_PAYOUT_LIMIT_ETB', value: '300', description: 'Maximum single payout approval limit for content buyback' },
@@ -43,23 +42,25 @@ async function main() {
   console.log('✅ System Settings upserted');
 
   // ── 2. Campus ───────────────────────────────────────────────────────────────
-  const wolisoCampus = await prisma.campus.upsert({
+  const amboCampus = await prisma.campus.upsert({
     where: { code: 'WOLISO' },
-    update: {},
+    update: {
+      name: 'Ambo University',
+    },
     create: {
       code: 'WOLISO',
-      name: 'Ambo University - Woliso Campus',
+      name: 'Ambo University',
       isActive: true,
     },
   });
-  console.log('✅ Campus WOLISO upserted');
+  console.log('✅ Campus Ambo University upserted');
 
   // ── 3. Programs ─────────────────────────────────────────────────────────────
   const natSciProgram = await prisma.program.upsert({
-    where: { campusId_code: { campusId: wolisoCampus.id, code: 'NAT_SCI' } },
+    where: { campusId_code: { campusId: amboCampus.id, code: 'NAT_SCI' } },
     update: {},
     create: {
-      campusId: wolisoCampus.id,
+      campusId: amboCampus.id,
       code: 'NAT_SCI',
       name: 'Natural Science',
       type: ProgramType.STREAM,
@@ -68,10 +69,10 @@ async function main() {
   });
 
   const socSciProgram = await prisma.program.upsert({
-    where: { campusId_code: { campusId: wolisoCampus.id, code: 'SOC_SCI' } },
+    where: { campusId_code: { campusId: amboCampus.id, code: 'SOC_SCI' } },
     update: {},
     create: {
-      campusId: wolisoCampus.id,
+      campusId: amboCampus.id,
       code: 'SOC_SCI',
       name: 'Social Science',
       type: ProgramType.STREAM,
@@ -170,37 +171,8 @@ async function main() {
   }
   console.log('✅ ProgramTermCourse mappings upserted (7 per stream)');
 
-  // ── 8. Initial admin (from env vars only, never hardcoded) ──────────────────
-  const adminEmail = process.env.ADMIN_EMAIL?.trim();
-  const adminPassword = process.env.ADMIN_INITIAL_PASSWORD?.trim();
-
-  if (adminEmail && adminPassword) {
-    const existing = await prisma.user.findFirst({ where: { email: adminEmail } });
-    if (!existing) {
-      const passwordHash = await bcrypt.hash(adminPassword, 10);
-      const admin = await prisma.user.create({
-        data: {
-          studentId: 'AMU-ADMIN-01',
-          fullName: 'System Administrator',
-          email: adminEmail,
-          passwordHash,
-          role: Role.ADMIN,
-          mustChangePassword: true,
-          canSell: false,
-        },
-      });
-      console.log(`✅ Created first admin account: ${admin.email} (mustChangePassword=true)`);
-    } else {
-      console.log(`ℹ️  Admin account ${adminEmail} already exists — skipped`);
-    }
-  } else {
-    console.log(
-      '⚠️  ADMIN_EMAIL and ADMIN_INITIAL_PASSWORD not set.\n' +
-      '   No admin account created. Run `npm run create-admin` to provision one.'
-    );
-  }
-
-  console.log('\n🎉 Seed complete. No student data, payments, or papers were created or deleted.');
+  console.log('\n🎉 Reference data seeded. No user accounts, payments, or papers were changed.');
+  console.log('   Provision administrators with `npm run create-admin`.');
 }
 
 main()

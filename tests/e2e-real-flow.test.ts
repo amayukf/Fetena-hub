@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Role, PaymentStatus, PaperStatus, ExamType, ProgramType, PaymentMethod } from '@prisma/client';
 import { handleApiRequest, prisma } from '../server/apiHandler';
 import { storage } from '../src/lib/storage';
+import { createOnePagePdf } from './pdfFixture';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 
@@ -19,7 +20,7 @@ function callApi(method: string, path: string, body?: any, headers: Record<strin
 
     let resStatus = 200;
     let resHeaders: any = {};
-    let resBody = '';
+    const chunks: Buffer[] = [];
 
     const res: any = {
       writeHead(status: number, hdrs: any) {
@@ -27,9 +28,10 @@ function callApi(method: string, path: string, body?: any, headers: Record<strin
         resHeaders = hdrs;
       },
       end(chunk?: any) {
-        if (chunk) resBody += chunk.toString();
+        if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        const resBody = Buffer.concat(chunks);
         try {
-          resolve({ status: resStatus, headers: resHeaders, body: JSON.parse(resBody) });
+          resolve({ status: resStatus, headers: resHeaders, body: JSON.parse(resBody.toString()) });
         } catch {
           resolve({ status: resStatus, headers: resHeaders, body: resBody });
         }
@@ -52,7 +54,7 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
   const testStudentEmail = `tadesse.alemu.${runId}@ambo.edu.et`;
   const testStudentPhone = `091${String(runId).slice(0, 7)}`;
   const testStudentId = `AMU-2026-${runId}`;
-  const verifierEmail = `e2e_verifier_${runId}@woliso.edu.et`;
+  const verifierEmail = `e2e_verifier_${runId}@ambo.edu.et`;
 
   let verifierUser: any;
   let natProg: any;
@@ -74,7 +76,7 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
     const campus = await prisma.campus.upsert({
       where: { code: 'WOLISO' },
       update: {},
-      create: { code: 'WOLISO', name: 'Ambo University - Woliso Campus' },
+      create: { code: 'WOLISO', name: 'Ambo University' },
     });
 
     natProg = await prisma.program.upsert({
@@ -145,9 +147,10 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
     const physKey = `published/e2e_phys1011_${runId}.pdf`;
     const philKey = `published/e2e_phil1011_${runId}.pdf`;
     const econKey = `published/e2e_econ1011_${runId}.pdf`;
-    await storage.upload(physKey, Buffer.from('REAL-TEST-PDF-PHYS-BYTES'), 'application/pdf');
-    await storage.upload(philKey, Buffer.from('REAL-TEST-PDF-PHIL-BYTES'), 'application/pdf');
-    await storage.upload(econKey, Buffer.from('REAL-TEST-PDF-ECON-BYTES'), 'application/pdf');
+    const pdfBytes = createOnePagePdf();
+    await storage.upload(physKey, pdfBytes, 'application/pdf');
+    await storage.upload(philKey, pdfBytes, 'application/pdf');
+    await storage.upload(econKey, pdfBytes, 'application/pdf');
 
     // Papers
     paperPhys = await prisma.examPaper.create({
@@ -223,16 +226,23 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
   });
 
   it('Step 2: Student submits a payment with receipt transaction ID and screenshot', async () => {
+    const receiptBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+    const authorization = { authorization: `Bearer ${studentSessionToken}` };
+    const uploadRes = await callApi('POST', '/api/upload', {
+      fileBase64: receiptBytes.toString('base64'),
+      reportedMime: 'image/jpeg',
+      category: 'screenshot',
+    }, authorization);
+    expect(uploadRes.status).toBe(201);
+
     const paymentRes = await callApi('POST', '/api/payments', {
       userId: studentUser.userId,
       programTermId: natY1S1.id,
       paymentMethod: 'TELEBIRR',
       transactionId: `TB_E2E_REAL_TX_${runId}`,
-      receiptImageStorageKey: `quarantine/receipt_e2e_${runId}.jpg`,
-      receiptImageSha256: sha256(`e2e-receipt-image-content-${runId}`),
-    }, {
-      authorization: `Bearer ${studentSessionToken}`,
-    });
+      receiptImageStorageKey: uploadRes.body.storageKey,
+      receiptImageSha256: sha256(receiptBytes),
+    }, authorization);
 
     expect(paymentRes.status).toBe(201);
     expect(paymentRes.body.payment.status).toBe(PaymentStatus.PENDING);
@@ -266,7 +276,15 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
     expect(accessRes.status).toBe(200);
     expect(accessRes.body.allowed).toBe(true);
     expect(accessRes.body.watermark.studentName).toBe('Tadesse Alemu');
-    expect(accessRes.body.streamUrl).toContain('/stream?token=');
+    expect(accessRes.body.pageCount).toBe(1);
+    expect(accessRes.body).not.toHaveProperty('streamUrl');
+
+    const pageRes = await callApi('GET', `/api/papers/${paperPhys.id}/pages/1`, undefined, {
+      authorization: `Bearer ${studentSessionToken}`,
+    });
+    expect(pageRes.status).toBe(200);
+    expect(pageRes.headers['Content-Type']).toBe('image/png');
+    expect(pageRes.body.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   });
 
   it('Step 5: Student opens Phil 1011 (Shared Course) -> Access granted', async () => {
@@ -287,10 +305,15 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
     expect(accessRes.status).toBe(403);
     expect(accessRes.body.allowed).toBe(false);
     expect(accessRes.body.reason).toBe('NO_ACTIVE_ENTITLEMENT');
+
+    const pageRes = await callApi('GET', `/api/papers/${paperEcon.id}/pages/1`, undefined, {
+      authorization: `Bearer ${studentSessionToken}`,
+    });
+    expect(pageRes.status).toBe(403);
   });
 
-  it('Step 7: Direct file URL / stream access without session fails (403)', async () => {
+  it('Step 7: Direct file URL / stream access is permanently disabled', async () => {
     const directStreamRes = await callApi('GET', `/api/papers/${paperPhys.id}/stream`);
-    expect(directStreamRes.status).toBe(403);
+    expect(directStreamRes.status).toBe(410);
   });
 });

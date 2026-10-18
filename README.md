@@ -1,13 +1,13 @@
-# ExamVault — Secure Ambo University (Woliso Campus) Exam Repository
+# ExamVault — Secure Ambo University Exam Repository
 
-ExamVault is a production-grade web application and secure archive designed specifically for first-year students at Ambo University (Woliso Campus). It enforces end-to-end security, role-based access control, server-side dynamic watermarking, anti-tamper payment verification, and an administrative paper buyback flow.
+ExamVault is a production-grade web application and secure archive designed specifically for first-year students at Ambo University. It enforces end-to-end security, role-based access control, server-side dynamic watermarking, anti-tamper payment verification, and an administrative paper buyback flow.
 
 ---
 
 ## 1. Quickstart: Running Locally from Zero
 
 ### Prerequisites
-- **Node.js**: v20 or higher
+- **Node.js**: v22.13 or higher (or v24 or higher)
 - **pnpm** or **npm**
 - **Docker** (recommended for local PostgreSQL) or an existing PostgreSQL 16+ instance
 
@@ -28,9 +28,9 @@ npm install
 npx prisma generate
 npx prisma migrate deploy
 
-# 5. Seed reference data (Campus WOLISO, Streams, Terms, 11 Courses, Settings)
+# 5. Seed reference data (Campus, Streams, Terms, 11 Courses, Settings)
 #    This command is SAFE to run multiple times — it uses upserts and never
-#    deletes any existing data.
+#    changes user accounts or deletes existing data.
 npm run seed
 
 # 6. Create the initial administrator account
@@ -52,6 +52,11 @@ npm run dev
 
 App is available at: **http://localhost:8443** (or port specified in `$PORT`).
 
+Paper viewing renders the original PDF or scan into authenticated, per-page PNGs
+on the server and embeds the viewer's name, student ID, and date in each image.
+The student viewer never receives the original paper file. Watermarks deter
+sharing but cannot prevent screenshots or photographs.
+
 ---
 
 ## 2. Environment Variables Reference
@@ -63,14 +68,12 @@ Copy `.env.example` to `.env.local` to override settings for local development:
 | `DATABASE_URL` | PostgreSQL connection URL | `postgresql://postgres:postgres@localhost:5432/examvault_db` |
 | `TEST_DATABASE_URL` | Scratch database used by `npm test` (name must contain `test`, or the suites refuse to run) | `postgresql://...examvault_test_db` |
 | `DIRECT_URL` | Direct connection for Prisma migrations | `postgresql://postgres:postgres@localhost:5432/examvault_db` |
-| `SESSION_SECRET` | **Required.** 32+ char secret for HMAC signing & viewer tickets; startup aborts without it | `openssl rand -base64 32` |
+| `SESSION_SECRET` | **Required.** 32+ char secret for HMAC signing; startup aborts without it | `openssl rand -base64 32` |
 | `NODE_ENV` | Environment mode (`development` or `production`). `npm start` forces `production` | `development` |
 | `ALLOW_ACTOR_IMPERSONATION` | Dev/test only. When not `"false"`, a non-production environment trusts the `x-actor-id` header (a full auth bypass). Always `"false"` on a real deployment | `"false"` |
 | `EXAMVAULT_ALLOW_NON_PRODUCTION` | Escape hatch: set to `yes` to let `npm start` run outside production mode | unset |
 | `SEED_DEV_CONFIRM` | Must be `yes` for `npm run seed:dev` to run | unset |
 | `PORT` | Local server port | `8443` (dev), `8080` (`npm start`) |
-| `ADMIN_EMAIL` | Optional initial admin email on startup | `admin@ambo.edu.et` |
-| `ADMIN_INITIAL_PASSWORD` | Optional initial admin password | `AdminStrongPassword2026!` |
 | `STORAGE_PROVIDER` | `local`, `r2`, or `s3`. `r2`/`s3` **require** credentials — the server refuses to fall back to local disk | `local` |
 | `S3_ENDPOINT` / `R2_ENDPOINT` | Cloudflare R2 / S3 Endpoint URL | `https://<account-id>.r2.cloudflarestorage.com` |
 | `S3_ACCESS_KEY_ID` / `R2_ACCESS_KEY_ID` | Storage Access Key | `xxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
@@ -89,7 +92,7 @@ npm run create-admin <email> <password>
 ```
 Example:
 ```bash
-npm run create-admin superadmin@woliso.edu.et SecureTempPassword2026#
+npm run create-admin superadmin@ambo.edu.et SecureTempPassword2026#
 ```
 - The user is created with `role: ADMIN` and `mustChangePassword: true`.
 - On their first login, the user is required to set a new password before accessing the system.
@@ -176,7 +179,7 @@ The storage adapter automatically activates Cloudflare R2/S3 storage while keepi
 
 ### Runbook C: "Suspected leaked account or credential compromise"
 1. Open **Admin Dashboard > Users** and find the compromised account.
-2. Click **Suspend Account** (`isActive: false`). This instantly blocks all session access and paper streaming.
+2. Click **Suspend Account** (`isActive: false`). This instantly blocks all session access and rendered paper-page requests.
 3. Terminate all active sessions in the database for the user.
 4. If needed, click **Block Selling** (`canSell: false`) to prevent fraudulent paper submissions.
 5. Review the **Audit Log** filtered by the user's ID to trace all IP addresses, downloaded papers, and submitted transactions.
@@ -185,6 +188,6 @@ The storage adapter automatically activates Cloudflare R2/S3 storage while keepi
 1. Go to **Admin Dashboard > Papers Manager**.
 2. Locate the paper using search or course filter (e.g. `Phys 1011`).
 3. Toggle status to **HIDDEN** or click **Delete** (Soft-delete).
-   - Once deleted or hidden, the server immediately denies all stream tickets and page requests with HTTP 403 / 404.
+   - Once deleted or hidden, the server immediately denies page requests. The legacy direct-file stream endpoint always returns HTTP 410.
 4. To permanently remove the asset from private storage: Delete the corresponding storage key (`published/...`) from the private storage bucket.
 5. An immutable entry is automatically recorded in the cryptographic **Audit Log** detailing the deletion action, timestamp, and admin actor.

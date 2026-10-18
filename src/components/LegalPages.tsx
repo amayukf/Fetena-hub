@@ -13,7 +13,7 @@ export function TermsPage({ go }: { go: (s: Screen) => void }) {
           <Badge tone="accent">OFFICIAL POLICY</Badge>
           <Heading level={1} style={{ marginTop: '8px' }}>Terms of Service</Heading>
           <p style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>
-            ExamVault · Ambo University, Woliso Campus · Effective Academic Year 2026
+            ExamVault · Ambo University · Effective Academic Year 2026
           </p>
         </div>
 
@@ -21,7 +21,7 @@ export function TermsPage({ go }: { go: (s: Screen) => void }) {
           <section>
             <Heading level={3}>1. Purpose of the Platform</Heading>
             <p>
-              ExamVault is an educational archive operated for verified undergraduate students of Ambo University, Woliso Campus.
+              ExamVault is an educational archive operated for verified undergraduate students of Ambo University.
               The service provides curated access to past historical mid-term exams, final exams, and quizzes to assist in structured course preparation.
             </p>
           </section>
@@ -79,7 +79,7 @@ export function PrivacyPage({ go }: { go: (s: Screen) => void }) {
           <Badge tone="success">DATA PROTECTION</Badge>
           <Heading level={1} style={{ marginTop: '8px' }}>Privacy Policy</Heading>
           <p style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>
-            How ExamVault handles student data at Ambo University Woliso Campus
+            How ExamVault handles student data at Ambo University
           </p>
         </div>
 
@@ -142,17 +142,17 @@ export function ContactPage({ go }: { go: (s: Screen) => void }) {
           <Badge tone="accent">SUPPORT & DESK</Badge>
           <Heading level={1} style={{ marginTop: '8px' }}>Contact & Help Desk</Heading>
           <p style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>
-            Ambo University · Woliso Campus Examination Services
+            Ambo University Examination Services
           </p>
         </div>
 
         <div className="contact-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '24px' }}>
           <div style={{ padding: '16px', background: 'var(--canvas)', borderRadius: '8px', border: '1px solid var(--line)' }}>
             <div style={{ color: 'var(--primary)', marginBottom: '8px' }}><Icon name="user" size={24}/></div>
-            <strong>Woliso Campus Academic Desk</strong>
+            <strong>Ambo University Academic Desk</strong>
             <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '4px 0 0' }}>
               Faculty Building 2, Ground Floor<br/>
-              Woliso, Oromia, Ethiopia
+              Ambo, Oromia, Ethiopia
             </p>
           </div>
 
@@ -169,7 +169,7 @@ export function ContactPage({ go }: { go: (s: Screen) => void }) {
             <div style={{ color: 'var(--primary)', marginBottom: '8px' }}><Icon name="help" size={24}/></div>
             <strong>Telegram & Digital Support</strong>
             <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '4px 0 0' }}>
-              Telegram: @ExamVaultWoliso<br/>
+              Telegram: @ExamVaultAmbo<br/>
               Email: support@examvault.edu.et
             </p>
           </div>

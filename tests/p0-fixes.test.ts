@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Role, ProgramType, PaymentMethod } from '@prisma/client';
 import { handleApiRequest, prisma } from '../server/apiHandler';
 import { storage } from '../src/lib/storage';
+import { createOnePagePdf } from './pdfFixture';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
@@ -20,7 +21,7 @@ function callApi(method: string, path: string, body?: any, headers: Record<strin
 
     let resStatus = 200;
     let resHeaders: any = {};
-    let resBody = '';
+    const chunks: Buffer[] = [];
 
     const res: any = {
       writeHead(status: number, hdrs: any) {
@@ -28,9 +29,10 @@ function callApi(method: string, path: string, body?: any, headers: Record<strin
         resHeaders = hdrs;
       },
       end(chunk?: any) {
-        if (chunk) resBody += chunk.toString();
+        if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        const resBody = Buffer.concat(chunks);
         try {
-          resolve({ status: resStatus, headers: resHeaders, body: JSON.parse(resBody) });
+          resolve({ status: resStatus, headers: resHeaders, body: JSON.parse(resBody.toString()) });
         } catch {
           resolve({ status: resStatus, headers: resHeaders, body: resBody });
         }
@@ -207,12 +209,21 @@ describe('P0 Critical Fixes Verification', () => {
   // -------------------------------------------------------------
   it('Fix 3: Accepts contributions with course code or ID and validates past date', async () => {
     const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    const contributionBytes = createOnePagePdf();
+    const uploadRes = await callApi('POST', '/api/upload', {
+      fileBase64: contributionBytes.toString('base64'),
+      reportedMime: 'application/pdf',
+      category: 'contribution',
+    }, {
+      'x-actor-id': studentUser.id,
+    });
+    expect(uploadRes.status).toBe(201);
 
     const res = await callApi(
       'POST',
       '/api/contributions',
       {
-        courseId: 'course-flen1011',
+        courseId: testCourse.id,
         courseCode: 'FLEn 1011',
         examType: 'FINAL',
         academicYear: 2015,
@@ -221,6 +232,7 @@ describe('P0 Critical Fixes Verification', () => {
         payoutPaymentMethod: 'TELEBIRR',
         payoutAccount: '0911223344',
         proposedPayoutEtb: 75,
+        storageKey: uploadRes.body.storageKey,
       },
       {
         'x-actor-id': studentUser.id,
@@ -333,12 +345,11 @@ describe('P0 Critical Fixes Verification', () => {
   });
 
   // -------------------------------------------------------------
-  // Test 9: Stream ticket duration is >= 2 hours and bound to user
+  // Test 9: Student viewer receives only authenticated, watermarked page images
   // -------------------------------------------------------------
-  it('Fix 1 (Stream Ticket Duration & User Binding): Stream ticket lasts 2 hours and binds to user', async () => {
-    // Create real published paper with a file in storage
+  it('does not expose the source PDF and renders authorized pages as PNG', async () => {
     const storageKey = `published/FLEn1011/stream_test_${runId}.pdf`;
-    const pdfBuf = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF');
+    const pdfBuf = createOnePagePdf();
     await storage.upload(storageKey, pdfBuf, 'application/pdf');
 
     const paper = await prisma.examPaper.create({
@@ -366,17 +377,25 @@ describe('P0 Critical Fixes Verification', () => {
 
     expect(accessRes.status).toBe(200);
     expect(accessRes.body.allowed).toBe(true);
-    expect(accessRes.body.streamUrl).toBeDefined();
+    expect(accessRes.body.pageCount).toBe(1);
+    expect(accessRes.body).not.toHaveProperty('streamUrl');
+    expect(accessRes.body).not.toHaveProperty('paper.storageKey');
 
-    // Verify expiration is greater than 1 hour in the future (7200 seconds)
-    const expiresAt = accessRes.body.expiresAt;
-    const durationSeconds = (expiresAt - Date.now()) / 1000;
-    expect(durationSeconds).toBeGreaterThan(3600);
+    const pageRes = await callApi('GET', `/api/papers/${paper.id}/pages/1`, undefined, {
+      'x-actor-id': adminUser.id,
+    });
+    expect(pageRes.status).toBe(200);
+    expect(pageRes.headers['Content-Type']).toBe('image/png');
+    expect(pageRes.body.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    expect(pageRes.headers['Cache-Control']).toContain('no-store');
 
-    // Stream the paper using the signed streamUrl
-    const streamRes = await callApi('GET', accessRes.body.streamUrl);
-    expect(streamRes.status).toBe(200);
-    expect(streamRes.headers['Content-Type']).toBe('application/pdf');
+    const outOfRangeRes = await callApi('GET', `/api/papers/${paper.id}/pages/2`, undefined, {
+      'x-actor-id': adminUser.id,
+    });
+    expect(outOfRangeRes.status).toBe(416);
+
+    const streamRes = await callApi('GET', `/api/papers/${paper.id}/stream?token=old-ticket`);
+    expect(streamRes.status).toBe(410);
 
     // Clean up with soft delete
     await prisma.examPaper.update({
