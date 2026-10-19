@@ -41,6 +41,8 @@ export interface UserSession {
   stream?: StreamCode | null;
   currentYear: number | null;
   mustChangePassword?: boolean;
+  avatarUrl?: string | null;
+  googleId?: string | null;
 }
 
 export interface ProgramSummary {

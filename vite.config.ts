@@ -17,6 +17,16 @@ export default defineConfig(({ mode }) => {
     build: {
       sourcemap: emitSourcemaps ? 'inline' : false,
       minify: !emitSourcemaps,
+      chunkSizeWarningLimit: 700,
+      rollupOptions: {
+        output: {
+          manualChunks(id: string) {
+            if (id.includes('node_modules') && (id.includes('react') || id.includes('react-dom'))) {
+              return 'vendor-react';
+            }
+          },
+        },
+      },
     },
     plugins: [
       examVaultApiPlugin(),

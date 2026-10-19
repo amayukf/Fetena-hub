@@ -78,6 +78,29 @@ interface RequestOptions {
   silentAuth?: boolean;
   /** Resolve with whatever body was returned instead of throwing on !ok. */
   lenient?: boolean;
+  /** Max retries for idempotent requests on transient failure (defaults to 2 for GET, 0 for mutating operations). */
+  retries?: number;
+}
+
+let currentSessionToken: string | null = null;
+try {
+  const storage = typeof globalThis !== 'undefined' ? (globalThis as any).localStorage : null;
+  currentSessionToken = storage ? storage.getItem('ev_session_token') : null;
+} catch {}
+
+export function setSessionToken(token: string | null): void {
+  currentSessionToken = token;
+  try {
+    const storage = typeof globalThis !== 'undefined' ? (globalThis as any).localStorage : null;
+    if (storage) {
+      if (token) storage.setItem('ev_session_token', token);
+      else storage.removeItem('ev_session_token');
+    }
+  } catch {}
+}
+
+export function getSessionToken(): string | null {
+  return currentSessionToken;
 }
 
 function buildHeaders(actorId?: string, actorRole?: string, asJson = false): Record<string, string> {
@@ -85,6 +108,10 @@ function buildHeaders(actorId?: string, actorRole?: string, asJson = false): Rec
   if (asJson) headers['Content-Type'] = 'application/json';
   if (actorId) headers['x-actor-id'] = actorId;
   if (actorRole) headers['x-actor-role'] = actorRole;
+  if (currentSessionToken) {
+    headers['Authorization'] = `Bearer ${currentSessionToken}`;
+    headers['x-session-token'] = currentSessionToken;
+  }
   return headers;
 }
 
@@ -96,64 +123,90 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     timeoutMs = DEFAULT_TIMEOUT_MS,
     silentAuth = false,
     lenient = false,
+    retries = method === 'GET' ? 2 : 0,
   } = options;
 
-  // A hung request must not block the UI forever — this app targets 2G/3G.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let lastError: any = null;
+  const maxAttempts = Math.max(1, retries + 1);
 
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: controller.signal,
-      credentials: 'same-origin',
-    });
-  } catch (err: any) {
-    if (err?.name === 'AbortError') {
-      throw new NetworkError('The request took too long and was cancelled. Please try again.');
-    }
-    throw new NetworkError();
-  } finally {
-    clearTimeout(timer);
-  }
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // A hung request must not block the UI forever — this app targets 2G/3G.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  // Parse defensively. An empty body, an HTML error page, or a 204 previously
-  // surfaced as "Unexpected end of JSON input" instead of a readable message.
-  const text = await res.text().catch(() => '');
-  let json: any = null;
-  if (text) {
+    let res: Response;
     try {
-      json = JSON.parse(text);
-    } catch {
-      json = null;
+      res = await fetch(path, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
+        credentials: 'same-origin',
+      });
+    } catch (err: any) {
+      clearTimeout(timer);
+      const isAbort = err?.name === 'AbortError';
+      lastError = isAbort
+        ? new NetworkError('The request took too long and was cancelled. Please try again.')
+        : new NetworkError();
+
+      if (attempt < maxAttempts) {
+        // Linear backoff: 250ms, 500ms
+        await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+        continue;
+      }
+      throw lastError;
+    } finally {
+      clearTimeout(timer);
     }
+
+    // On transient gateway/proxy errors (502, 503, 504), retry idempotent GET requests
+    if (
+      method === 'GET' &&
+      (res.status === 502 || res.status === 503 || res.status === 504) &&
+      attempt < maxAttempts
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+      continue;
+    }
+
+    // Parse defensively. An empty body, an HTML error page, or a 204 previously
+    // surfaced as "Unexpected end of JSON input" instead of a readable message.
+    const text = await res.text().catch(() => '');
+    let json: any = null;
+    if (text) {
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = null;
+      }
+    }
+
+    if (res.status === 401) {
+      if (!silentAuth) unauthorizedHandler?.();
+      if (lenient) return (json ?? { error: 'Authentication required' }) as T;
+      throw new AuthExpiredError(json?.error);
+    }
+
+    if (!res.ok) {
+      if (lenient) return (json ?? {}) as T;
+      const error: any = new Error(
+        json?.error || `Request failed (HTTP ${res.status} ${res.statusText || ''})`.trim()
+      );
+      error.status = res.status;
+      error.details = json?.details;
+      throw error;
+    }
+
+    if (json === null) {
+      if (lenient) return {} as T;
+      throw new NetworkError('The server returned an unexpected, non-JSON response.');
+    }
+
+    return json as T;
   }
 
-  if (res.status === 401) {
-    if (!silentAuth) unauthorizedHandler?.();
-    if (lenient) return (json ?? { error: 'Authentication required' }) as T;
-    throw new AuthExpiredError(json?.error);
-  }
-
-  if (!res.ok) {
-    if (lenient) return (json ?? {}) as T;
-    const error: any = new Error(
-      json?.error || `Request failed (HTTP ${res.status} ${res.statusText || ''})`.trim()
-    );
-    error.status = res.status;
-    error.details = json?.details;
-    throw error;
-  }
-
-  if (json === null) {
-    if (lenient) return {} as T;
-    throw new NetworkError('The server returned an unexpected, non-JSON response.');
-  }
-
-  return json as T;
+  throw lastError || new NetworkError();
 }
 
 export const api = {
@@ -418,6 +471,7 @@ export const api = {
     // request masquerade as one — resolve with the error body and let the
     // caller inspect it.
     return request<any>(`/api/papers/${paperId}/access?userId=${encodeURIComponent(userId)}`, {
+      headers: buildHeaders(userId),
       silentAuth: true,
       lenient: true,
     });
@@ -426,7 +480,7 @@ export const api = {
   async reportPaperProblem(paperId: string, data: { userId: string; category: string; description?: string }) {
     return request<any>(`/api/papers/${paperId}/report`, {
       method: 'POST',
-      headers: buildHeaders(undefined, undefined, true),
+      headers: buildHeaders(data.userId, undefined, true),
       body: data,
     });
   },
@@ -439,24 +493,52 @@ export const api = {
     stream?: StreamCode;
     password: string;
   }) {
-    return request<any>('/api/auth/signup', {
+    const res = await request<any>('/api/auth/signup', {
       method: 'POST',
       headers: buildHeaders(undefined, undefined, true),
       body: data,
     });
+    if (res?.token) {
+      setSessionToken(res.token);
+    }
+    return res;
   },
 
   async login(data: { identifier: string; password: string }) {
-    return request<any>('/api/auth/login', {
+    const res = await request<any>('/api/auth/login', {
       method: 'POST',
       headers: buildHeaders(undefined, undefined, true),
       body: data,
+    });
+    if (res?.token) {
+      setSessionToken(res.token);
+    }
+    return res;
+  },
+
+  async googleAuth(data: { credential?: string; stream?: StreamCode; devProfile?: any }) {
+    const res = await request<any>('/api/auth/google', {
+      method: 'POST',
+      headers: buildHeaders(undefined, undefined, true),
+      body: data,
+    });
+    if (res?.token) {
+      setSessionToken(res.token);
+    }
+    return res;
+  },
+
+  async getGoogleConfig() {
+    return request<{ clientId: string | null; enabled: boolean }>('/api/auth/google/config', {
+      headers: buildHeaders(),
+      silentAuth: true,
+      lenient: true,
     });
   },
 
   async getMe() {
     try {
-      return await request<any>('/api/auth/me', { silentAuth: true });
+      return await request<any>('/api/auth/me', { headers: buildHeaders(), silentAuth: true });
     } catch (err) {
       // Only a genuine 401 means "no session". A 5xx or a network outage is an
       // error the caller must see, not a silent logout.
@@ -468,7 +550,8 @@ export const api = {
   },
 
   async logout() {
-    return request<any>('/api/auth/logout', { method: 'POST', silentAuth: true, lenient: true });
+    setSessionToken(null);
+    return request<any>('/api/auth/logout', { method: 'POST', headers: buildHeaders(), silentAuth: true, lenient: true });
   },
 
   async changePassword(data: { oldPassword?: string; newPassword: string; userId?: string }) {
@@ -502,4 +585,15 @@ export const api = {
       body: { payoutTxId },
     });
   },
+
+  async runHousekeeping(actorId?: string, actorRole?: string) {
+    return request<{ success: boolean; expiredSessions: number; expiredRateLimits: number; expiredResetTokens: number }>(
+      '/api/admin/housekeeping',
+      {
+        method: 'POST',
+        headers: buildHeaders(actorId, actorRole, true),
+      }
+    );
+  },
 };
+

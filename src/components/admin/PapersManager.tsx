@@ -141,7 +141,7 @@ export default function PapersManager({
             quality: uploadQuality,
             status: uploadStatus,
             isFreeSample: uploadIsFreeSample,
-            pageCount: estimatePageCount(file.size),
+            pageCount: (uploadRes as any).pageCount || estimatePageCount(file.size),
             storageKey: uploadRes.storageKey,
             sha256: uploadRes.sha256,
             mimeType: uploadRes.mimeType,

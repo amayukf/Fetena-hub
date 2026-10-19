@@ -84,7 +84,7 @@ export const theme = {
   },
 
   constants: {
-    appName: 'ExamVault',
+    appName: 'Fetena Hub',
     tagline: 'Prepare smarter with past exam papers.',
     university: 'Ambo University',
     campus: 'Ambo University',

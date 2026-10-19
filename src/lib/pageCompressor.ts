@@ -62,11 +62,11 @@ export function generateCompressedPageBuffer(
     
     <!-- Watermark Pattern embedded into vector structure -->
     <g opacity="0.08" fill="#0c4a34" font-size="11" font-weight="700" transform="rotate(-25 400 565)">
-      <text x="200" y="300">EXAMVAULT PROTECTED · AMBO UNIVERSITY</text>
-      <text x="200" y="450">EXAMVAULT PROTECTED · AMBO UNIVERSITY</text>
-      <text x="200" y="600">EXAMVAULT PROTECTED · AMBO UNIVERSITY</text>
-      <text x="200" y="750">EXAMVAULT PROTECTED · AMBO UNIVERSITY</text>
-      <text x="200" y="900">EXAMVAULT PROTECTED · AMBO UNIVERSITY</text>
+      <text x="200" y="300">FETENA HUB / EXAMVAULT PROTECTED · AMBO UNIVERSITY</text>
+      <text x="200" y="450">FETENA HUB / EXAMVAULT PROTECTED · AMBO UNIVERSITY</text>
+      <text x="200" y="600">FETENA HUB / EXAMVAULT PROTECTED · AMBO UNIVERSITY</text>
+      <text x="200" y="750">FETENA HUB / EXAMVAULT PROTECTED · AMBO UNIVERSITY</text>
+      <text x="200" y="900">FETENA HUB / EXAMVAULT PROTECTED · AMBO UNIVERSITY</text>
     </g>
 
     <!-- Content Sections based on page number -->
@@ -100,7 +100,7 @@ export function generateCompressedPageBuffer(
 
     <!-- Footer -->
     <line x1="40" y1="1060" x2="760" y2="1060" stroke="#cbdad3" stroke-width="1"/>
-    <text x="400" y="1090" text-anchor="middle" font-size="11" fill="#7d968d">EXAMVAULT SECURE VIEWER · END OF PAGE ${pageNumber} OF ${totalPages} · STRICTLY NOT FOR REDISTRIBUTION</text>
+    <text x="400" y="1090" text-anchor="middle" font-size="11" fill="#7d968d">FETENA HUB SECURE VIEWER · END OF PAGE ${pageNumber} OF ${totalPages} · STRICTLY NOT FOR REDISTRIBUTION</text>
   </svg>`;
 
   return Buffer.from(svgContent, "utf-8");

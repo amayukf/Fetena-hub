@@ -236,7 +236,7 @@ export class LocalStorageAdapter implements StorageAdapter {
   private secret: string;
 
   constructor(baseDir?: string, secret?: string) {
-    this.baseDir = baseDir || path.resolve(process.cwd(), "storage");
+    this.baseDir = baseDir || process.env.STORAGE_BASE_DIR || path.resolve(process.cwd(), "storage");
     const resolvedSecret = secret || process.env.SESSION_SECRET;
     if (!resolvedSecret || resolvedSecret.length < 32) {
       throw new Error(
@@ -437,15 +437,33 @@ export function getStorageAdapter(): StorageAdapter {
     (process.env.R2_SECRET_ACCESS_KEY || process.env.S3_SECRET_ACCESS_KEY)
   );
 
+  const isProd = process.env.NODE_ENV === "production";
+  const isBuild = typeof process !== "undefined" && Boolean(
+    process.env.npm_lifecycle_event === "build" ||
+    (Array.isArray(process.argv) && process.argv.some(arg => arg.includes("build") || arg.includes("vite")))
+  );
+  const isProdRuntime = isProd && !isBuild;
+
   if (provider === "r2" || provider === "s3") {
     // SECURITY: never silently fall back to ephemeral local disk in a
     // cloud-storage deployment — private papers and receipts could be lost.
     if (!hasCreds) {
       throw new Error(
-        `FATAL: STORAGE_PROVIDER="${provider}" requires S3/R2 credentials. Refusing to fall back to local disk storage.`
+        `FATAL: STORAGE_PROVIDER="${provider}" requires S3/R2 credentials. Refusing to fall back to unconfigured or ephemeral storage.`
       );
     }
     currentStorage = new CloudflareR2StorageAdapter();
+  } else if (isProdRuntime) {
+    // In production runtime, persistent storage must be explicitly configured.
+    // An unset provider or silent fallback to an ephemeral container filesystem is forbidden.
+    const persistentPath = process.env.PERSISTENT_STORAGE_PATH || process.env.STORAGE_BASE_DIR;
+    if (provider === "local" && persistentPath) {
+      currentStorage = new LocalStorageAdapter(persistentPath);
+    } else {
+      throw new Error(
+        'FATAL: In production, persistent storage must be configured. Set STORAGE_PROVIDER="r2" or "s3" with valid credentials, or set STORAGE_PROVIDER="local" with a verified PERSISTENT_STORAGE_PATH. Refusing to start with ephemeral storage.'
+      );
+    }
   } else {
     currentStorage = new LocalStorageAdapter();
   }

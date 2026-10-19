@@ -66,7 +66,8 @@ function addWatermark(
 
 export async function renderDocumentPage(
   data: Uint8Array,
-  pageNumber: number
+  pageNumber: number,
+  watermark?: PageWatermark
 ): Promise<{ image: Buffer; pageCount: number }> {
   const kind = documentKind(data);
 
@@ -87,6 +88,9 @@ export async function renderDocumentPage(
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, width, height);
     context.drawImage(source, 0, 0, width, height);
+    if (watermark) {
+      addWatermark(context, width, height, watermark);
+    }
     return { image: await canvas.encode("png"), pageCount: 1 };
   }
 
@@ -122,6 +126,10 @@ export async function renderDocumentPage(
       viewport,
     }).promise;
 
+    if (watermark) {
+      addWatermark(context, width, height, watermark);
+    }
+
     return { image: await canvas.encode("png"), pageCount: document.numPages };
   } finally {
     await task.destroy();
@@ -145,6 +153,5 @@ export async function renderWatermarkedPage(
   pageNumber: number,
   watermark: PageWatermark
 ): Promise<{ image: Buffer; pageCount: number }> {
-  const rendered = await renderDocumentPage(data, pageNumber);
-  return { ...rendered, image: await applyWatermarkToPage(rendered.image, watermark) };
+  return renderDocumentPage(data, pageNumber, watermark);
 }
