@@ -87,6 +87,7 @@ enum AuditRiskLevel {
 model User {
   id              String         @id @default(uuid())
   studentId       String?        @unique // e.g. AMU-2026-0042
+  googleId        String?        @unique
   fullName        String
   phone           String?        @unique
   email           String?        @unique
@@ -139,6 +140,8 @@ model Session {
 
   @@index([userId])
   @@index([sessionTokenHash])
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
 }
 
 model PasswordResetToken {
@@ -301,6 +304,7 @@ model ExamPaper {
   contribution  PaperContribution?
 
   @@index([courseId])
+  @@index([courseId, status, examType])
   @@index([status, deletedAt])
   @@index([isFreeSample])
   @@index([sha256])
@@ -359,6 +363,7 @@ model Payment {
 
   @@unique([paymentMethod, transactionId])
   @@index([status])
+  @@index([status, createdAt])
   @@index([userId])
   @@index([programTermId])
   @@index([screenshotSha256])

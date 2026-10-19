@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.github
+.agents
+.gemini
+tests
+*.log
+.env
+.env.local
+.DS_Store
+Thumbs.db
+init_db.sql
+*.tmp

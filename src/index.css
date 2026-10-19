@@ -148,6 +148,63 @@ footer small { grid-column: span 2; color: var(--muted); border-top: 1px solid v
 .form-note { text-align: center; font-size: .82rem; }
 .auth-mobile-logo { display: none; }
 
+/* Google Authentication UI */
+.google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 16px;
+  background: white;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.92rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.google-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+.google-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.auth-separator {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 18px 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.auth-separator::before,
+.auth-separator::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--line);
+}
+.auth-separator span {
+  padding: 0 12px;
+}
+.google-demo-box {
+  background: #f0fdf4;
+  border: 1px dashed #86efac;
+  border-radius: var(--radius-sm, 8px);
+  padding: 14px;
+  margin-top: 14px;
+  font-size: 0.85rem;
+  color: #166534;
+}
+
 /* Application shell */
 .app-shell { min-height: 100vh; padding: 76px 0 0 256px; }
 .topbar { height: 76px; background: rgba(255,255,255,.95); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); position: fixed; z-index: 20; top: 0; left: 0; right: 0; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; }

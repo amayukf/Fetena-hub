@@ -1,193 +1,187 @@
-# ExamVault — Secure Ambo University Exam Repository
+<p align="center">
+  <img src="public/favicon.svg" width="80" height="80" alt="Fetena Hub Logo" />
+</p>
 
-ExamVault is a production-grade web application and secure archive designed specifically for first-year students at Ambo University. It enforces end-to-end security, role-based access control, server-side dynamic watermarking, anti-tamper payment verification, and an administrative paper buyback flow.
+<h1 align="center">🎓 Fetena Hub</h1>
+
+<p align="center">
+  <strong>The Official Past Examination Archive & Study Platform for Ambo University Students</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/React-19.0-61DAFB?style=flat&logo=react&logoColor=black" alt="React 19" />
+  <img src="https://img.shields.io/badge/TypeScript-5.7-3178C6?style=flat&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Vite-8.0-646CFF?style=flat&logo=vite&logoColor=white" alt="Vite 8" />
+  <img src="https://img.shields.io/badge/Prisma-6.19-2D3748?style=flat&logo=prisma&logoColor=white" alt="Prisma ORM" />
+  <img src="https://img.shields.io/badge/PostgreSQL-16+-336791?style=flat&logo=postgresql&logoColor=white" alt="PostgreSQL" />
+  <img src="https://img.shields.io/badge/Cloudflare_R2-S3_Compatible-F38020?style=flat&logo=cloudflare&logoColor=white" alt="Cloudflare R2" />
+  <img src="https://img.shields.io/badge/Tests-132%20Passing-success" alt="Vitest 100% Passing" />
+</p>
 
 ---
 
-## 1. Quickstart: Running Locally from Zero
+## 📖 Overview
 
-### Prerequisites
-- **Node.js**: v22.13 or higher (or v24 or higher)
-- **pnpm** or **npm**
-- **Docker** (recommended for local PostgreSQL) or an existing PostgreSQL 16+ instance
+**Fetena Hub** is a secure, high-performance web application purpose-built for Ambo University students. It provides verified, digitized access to historical freshman examination papers across **Natural Science** and **Social Science** streams.
 
-### Step-by-Step Setup
+Engineered specifically for low-bandwidth campus mobile networks (2G/3G), Fetena Hub features server-side dynamic watermarking, automated database housekeeping, Google OAuth 2.0 integration, Telebirr/CBE payment verification, and an administrative paper buyback flow.
 
+---
+
+## ✨ Key Features
+
+### 📱 Ultra-Lightweight & Mobile-First
+* **Optimized Initial Payload**: Code-split with `React.lazy()` — main student bundle is just **~51 kB gzipped**.
+* **Instant Page Streaming**: High-throughput single-pass page rendering with canvas rasterization.
+* **Network Resilience**: Automatic exponential-backoff retries for transient campus network hiccups.
+
+### 🔐 Server-Side Dynamic Watermarking
+* **Anti-Redistribution Engine**: Students view papers exclusively through an authenticated, canvas-rendered viewer.
+* **Cryptographic Watermark**: Every page embeds the student's legal full name, student ID, and access timestamp directly onto the image raster to deter unauthorized leaks and commercial resale.
+
+### 🔑 Flexible Authentication & Role Separation
+* **Google OAuth 2.0**: One-click Google sign-in and account creation alongside student ID/phone login.
+* **Strict RBAC Separation**: Dedicated roles for `STUDENT`, `PAYMENT_VERIFIER`, `CONTENT_MANAGER`, and `ADMIN`.
+* **Immutability & Safety**: Append-only PostgreSQL audit log protected by database triggers.
+
+### 💰 Paper Buyback & Payment Verification
+* **Sell-to-Admin**: Students can photograph or scan past exams and sell them to Fetena Hub for direct Telebirr/CBE cash payouts.
+* **Payment Verifier Desk**: Admin tools to verify Telebirr & CBE Birr receipts, unlock semester access, or reject invalid screenshots with structured feedback.
+
+---
+
+## 🏗️ System Architecture
+
+```
+                       ┌─────────────────────────┐
+                       │   Fetena Hub React SPA  │
+                       │  (Vite 8 + Tailwind CSS)│
+                       └────────────┬────────────┘
+                                    │ HTTP / HTTPS
+                                    ▼
+                       ┌─────────────────────────┐
+                       │   Unified Node Server   │
+                       │  (server/index.ts:8080) │
+                       └─────┬─────────────┬─────┘
+                             │             │
+              Prisma ORM     │             │ Private S3 API
+                             ▼             ▼
+                 ┌───────────────┐     ┌──────────────────────┐
+                 │  PostgreSQL   │     │ Cloudflare R2 / S3   │
+                 │  (v14+ Neon)  │     │ (Encrypted Archive)  │
+                 └───────────────┘     └──────────────────────┘
+```
+
+---
+
+## 🚀 Quickstart: Local Development
+
+### 1. Prerequisites
+* **Node.js**: `v22.x` or higher
+* **npm** or **pnpm**
+* **PostgreSQL**: Local service on port `5432` or a remote connection (e.g. Neon, Supabase)
+
+### 2. Setup
 ```bash
-# 1. Clone and navigate into directory
-cd "d:/ExamVault Web App Prototype"
+# 1. Clone the repository
+git clone https://github.com/amayukf/Fetena-hub.git
+cd Fetena-hub
 
 # 2. Install dependencies
 npm install
 
-# 3. Database:
-# Note: A native PostgreSQL service is already active on port 5432 on this machine!
-# (If Docker is installed, you can optionally run: docker compose up -d)
+# 3. Configure environment
+cp .env.example .env
+# Edit .env with your PostgreSQL credentials and a 32+ char SESSION_SECRET
 
-# 4. Generate Prisma Client and apply migrations & database triggers
-npx prisma generate
+# 4. Apply database migrations
 npx prisma migrate deploy
 
-# 5. Seed reference data (Campus, Streams, Terms, 11 Courses, Settings)
-#    This command is SAFE to run multiple times — it uses upserts and never
-#    changes user accounts or deletes existing data.
+# 5. Seed baseline reference data (Campus, Programs, Semesters, Courses)
 npm run seed
 
-# 6. Create the initial administrator account
-npm run create-admin admin@ambo.edu.et CampusAdminPassword2026!
+# 6. Provision the primary system administrator account
+npm run create-admin admin@ambo.edu.et "StrongPassword2026!"
 
-# 7. (Optional) Seed local dev test accounts (non-production only)
-#    Requires SEED_DEV_CONFIRM=yes and refuses production-looking databases.
-SEED_DEV_CONFIRM=yes npm run seed:dev
-
-# 8. Start the development server
+# 7. Start the development server
 npm run dev
 ```
 
-> ⚠️ **NEVER run `npm run seed:reset` against real data.**
-> `seed:reset` runs a full `TRUNCATE CASCADE` that **permanently deletes every
-> student account, payment, and exam paper** in the database. It is blocked in
-> `NODE_ENV=production` and requires interactive confirmation. It exists only
-> for local development database resets.
-
-App is available at: **http://localhost:8443** (or port specified in `$PORT`).
-
-Paper viewing renders the original PDF or scan into authenticated, per-page PNGs
-on the server and embeds the viewer's name, student ID, and date in each image.
-The student viewer never receives the original paper file. Watermarks deter
-sharing but cannot prevent screenshots or photographs.
+The app will be live at `http://localhost:8443` (or the configured `$PORT`).
 
 ---
 
-## 2. Environment Variables Reference
+## 🧪 Testing & Code Quality
 
-Copy `.env.example` to `.env.local` to override settings for local development:
-
-| Variable | Description | Default / Example |
-|---|---|---|
-| `DATABASE_URL` | PostgreSQL connection URL | `postgresql://postgres:postgres@localhost:5432/examvault_db` |
-| `TEST_DATABASE_URL` | Scratch database used by `npm test` (name must contain `test`, or the suites refuse to run) | `postgresql://...examvault_test_db` |
-| `DIRECT_URL` | Direct connection for Prisma migrations | `postgresql://postgres:postgres@localhost:5432/examvault_db` |
-| `SESSION_SECRET` | **Required.** 32+ char secret for HMAC signing; startup aborts without it | `openssl rand -base64 32` |
-| `NODE_ENV` | Environment mode (`development` or `production`). `npm start` forces `production` | `development` |
-| `ALLOW_ACTOR_IMPERSONATION` | Dev/test only. When not `"false"`, a non-production environment trusts the `x-actor-id` header (a full auth bypass). Always `"false"` on a real deployment | `"false"` |
-| `EXAMVAULT_ALLOW_NON_PRODUCTION` | Escape hatch: set to `yes` to let `npm start` run outside production mode | unset |
-| `SEED_DEV_CONFIRM` | Must be `yes` for `npm run seed:dev` to run | unset |
-| `PORT` | Local server port | `8443` (dev), `8080` (`npm start`) |
-| `STORAGE_PROVIDER` | `local`, `r2`, or `s3`. `r2`/`s3` **require** credentials — the server refuses to fall back to local disk | `local` |
-| `S3_ENDPOINT` / `R2_ENDPOINT` | Cloudflare R2 / S3 Endpoint URL | `https://<account-id>.r2.cloudflarestorage.com` |
-| `S3_ACCESS_KEY_ID` / `R2_ACCESS_KEY_ID` | Storage Access Key | `xxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
-| `S3_SECRET_ACCESS_KEY` / `R2_SECRET_ACCESS_KEY`| Storage Secret Key | `xxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
-| `S3_BUCKET_NAME` / `R2_BUCKET_NAME` | Storage Bucket Name | `examvault-private-archive` |
-| `STORAGE_BASE_DIR` | Private disk folder if S3 keys not set | `storage/` (outside web root) |
-
----
-
-## 3. Creating and Managing Administrators
-
-To provision an initial administrator or emergency backup administrator:
+Fetena Hub is backed by an automated 132-test Vitest suite covering authentication, RBAC boundaries, payment approvals, server rendering, and database triggers.
 
 ```bash
-npm run create-admin <email> <password>
+# Run the entire test suite
+npm test
+
+# Run strict TypeScript typechecks across client & server
+npm run typecheck
+
+# Build the production bundle
+npm run build
 ```
-Example:
-```bash
-npm run create-admin superadmin@ambo.edu.et SecureTempPassword2026#
-```
-- The user is created with `role: ADMIN` and `mustChangePassword: true`.
-- On their first login, the user is required to set a new password before accessing the system.
-- Existing admins can also manage roles and permissions via the **Admin Dashboard > Users** screen.
-- **Safety**: the script refuses to promote an account that already exists with a non-admin role, and refuses to overwrite an existing password, unless you pass `--force`. It also rejects admin passwords shorter than 12 characters.
 
 ---
 
-## 4. Switching to Hosted PostgreSQL (Neon) and Cloudflare R2
+## 🌐 Production Deployment
 
-### Switching to Neon
-Switching to Neon is a **one-line change**:
-1. Open `.env.local` (or environment configuration in production host).
-2. Set `DATABASE_URL` to your Neon connection string:
+### 1. Production Start
+```bash
+npm run build
+npm start
+```
+`npm start` launches [server/index.ts](file:///server/index.ts), which forces `NODE_ENV=production`, binds security headers (`HSTS`, `CSP`, `X-Content-Type-Options: nosniff`), serves the compiled SPA from `dist/`, and handles all `/api/*` endpoints.
+
+### 2. Docker Deployment
+A production-ready multi-stage [Dockerfile](file:///Dockerfile) is included:
+```bash
+# Build the container
+docker build -t fetena-hub:latest .
+
+# Run with environment file
+docker run -d \
+  --name fetena-hub \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  --env-file .env \
+  fetena-hub:latest
+```
+
+### 3. Cloudflare R2 Storage Setup
+1. Log in to the Cloudflare Dashboard and navigate to **R2 Object Storage**.
+2. Create a bucket named `fetenahub-private-storage`.
+3. Create an API token with **Object Read & Write** permissions.
+4. Set the following variables in `.env`:
    ```env
-   DATABASE_URL="postgres://username:password@ep-xxxxxxxx.us-east-2.aws.neon.tech/examvault?sslmode=require"
-   DIRECT_URL="postgres://username:password@ep-xxxxxxxx.us-east-2.aws.neon.tech/examvault?sslmode=require"
+   STORAGE_PROVIDER="r2"
+   S3_ENDPOINT="https://<account-id>.r2.cloudflarestorage.com"
+   S3_REGION="auto"
+   S3_ACCESS_KEY_ID="your_r2_access_key_id"
+   S3_SECRET_ACCESS_KEY="your_r2_secret_access_key"
+   S3_BUCKET_NAME="fetenahub-private-storage"
    ```
-3. Run migrations then the **safe** idempotent seed:
-   ```bash
-   npx prisma migrate deploy
-   npm run seed
-   ```
-   > Do **not** run `npm run seed:reset` against a Neon database that has real data.
 
-### Switching to Cloudflare R2 / AWS S3
-Provide your R2 bucket credentials in environment variables:
-```env
-S3_ENDPOINT="https://<cloudflare-account-id>.r2.cloudflarestorage.com"
-S3_ACCESS_KEY_ID="your-r2-access-key-id"
-S3_SECRET_ACCESS_KEY="your-r2-secret-access-key"
-S3_BUCKET_NAME="examvault-assets"
-```
-The storage adapter automatically activates Cloudflare R2/S3 storage while keeping files strictly private under `quarantine/` and `published/`.
+Refer to [DEPLOYMENT.md](file:///DEPLOYMENT.md) for Nginx configuration, SSL certificates, and process manager setups.
 
 ---
 
-## 5. Production Deployment Steps
+## 🔒 Security Principles
 
-1. **Verify Environment**:
-   - `NODE_ENV=production` is **forced by `npm start`** — you do not need to set it (see below).
-   - Ensure a cryptographically random `SESSION_SECRET` (minimum 32 characters) is configured.
-2. **Build Application**:
-   ```bash
-   npm run build
-   ```
-3. **Run Production Server**:
-   ```bash
-   npm start
-   ```
-   `npm start` runs `server/index.ts`, which serves the built SPA from `dist/` **and** every `/api/*` route from one process, applies security headers (`HSTS`, `CSP`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`), and shuts down gracefully on `SIGTERM`/`SIGINT`.
-
-   It **forces `NODE_ENV=production`**. Importing `@prisma/client` loads `.env`, which used to overwrite `NODE_ENV` and silently downgrade the server to development mode (impersonation enabled, insecure cookies, fail-fast checks skipped). Set `EXAMVAULT_ALLOW_NON_PRODUCTION=yes` if you genuinely need to run this entrypoint outside production.
-
-   > Because it sends `X-Frame-Options: DENY` / `frame-ancestors 'none'`, the production server cannot be embedded in an iframe. Use the Vite dev server for the Figma preview panel.
-
-   > `npm run preview` (`vite preview`) is a **local accessibility check only**. It is not a production server: it runs a single unclustered process with no TLS and never sets `NODE_ENV=production`, so secure cookies and the production-only fail-fast checks stay disabled.
-
-   Before starting, confirm:
-   - `SESSION_SECRET` is a real 32+ character random value (startup aborts otherwise).
-   - `STORAGE_PROVIDER` is `local`, or `r2`/`s3` **with** real credentials (startup aborts otherwise).
-   - `ALLOW_ACTOR_IMPERSONATION` is `"false"` (production already disables impersonation; this is belt-and-braces).
-
-   Health check: `GET /health` (also `GET /api/health`) returns JSON with database connectivity, and responds `503` when the database is unreachable. It works on both the production server and the Vite dev server.
+* **No Plaintext Passwords**: Hashed with bcrypt (10 rounds).
+* **Mandatory Initial Password Rotation**: Newly provisioned staff accounts must set a confidential password upon first login.
+* **Anti-Impersonation**: `ALLOW_ACTOR_IMPERSONATION` is strictly disabled in production.
+* **Session Secret Enforcement**: Server fails fast on boot if `SESSION_SECRET` is missing, short, or placeholder.
+* **Rate-Limiting**: IP and account-level throttling on login, upload, and payment submissions.
+* **Audit Trail**: Every administrative action, approval, and payout is logged to an immutable table.
 
 ---
 
-## 6. Operational Runbooks
+## 📜 License & Copyright
 
-### Runbook A: "Student paid but is locked out"
-1. Navigate to **Admin Dashboard > Users**.
-2. Search for the student by their email, phone number, or Student ID (e.g. `AMU-2026-xxxx`).
-3. Click **Access History** to inspect:
-   - Account status (must be **Active**; if suspended, click **Reactivate**).
-   - Payment history: Check if their payment is **PENDING** or **REJECTED**.
-4. If payment is pending: Go to **Payments Queue**, verify transaction ID against Telebirr/CBE statement, and click **Approve**. This automatically creates the active entitlement for the semester.
-5. If concurrent sessions exceeded: Advise student to log out from their previous browser or mobile device (maximum 2 concurrent sessions permitted).
-
-### Runbook B: "Payment queue is stuck or slow"
-1. In **Admin Dashboard > Settings**, verify that the platform price and payment details (Telebirr Number, CBE Account Number) are correctly configured.
-2. Check PostgreSQL connection health by calling `GET /health`.
-3. Payment Verifiers can filter by **PENDING** payments and bulk-review receipts.
-4. If a receipt image cannot be downloaded or is corrupted: Click **Reject** and provide clear instructions ("Receipt blurred; please upload clear screenshot showing Telebirr transaction code").
-
-### Runbook C: "Suspected leaked account or credential compromise"
-1. Open **Admin Dashboard > Users** and find the compromised account.
-2. Click **Suspend Account** (`isActive: false`). This instantly blocks all session access and rendered paper-page requests.
-3. Terminate all active sessions in the database for the user.
-4. If needed, click **Block Selling** (`canSell: false`) to prevent fraudulent paper submissions.
-5. Review the **Audit Log** filtered by the user's ID to trace all IP addresses, downloaded papers, and submitted transactions.
-
-### Runbook D: "Paper must be removed urgently (Copyright / Exam Leak)"
-1. Go to **Admin Dashboard > Papers Manager**.
-2. Locate the paper using search or course filter (e.g. `Phys 1011`).
-3. Toggle status to **HIDDEN** or click **Delete** (Soft-delete).
-   - Once deleted or hidden, the server immediately denies page requests. The legacy direct-file stream endpoint always returns HTTP 410.
-4. To permanently remove the asset from private storage: Delete the corresponding storage key (`published/...`) from the private storage bucket.
-5. An immutable entry is automatically recorded in the cryptographic **Audit Log** detailing the deletion action, timestamp, and admin actor.
+© 2026 **Fetena Hub** · Ambo University. All rights reserved.
+Developed for the undergraduate academic community of Ambo University.

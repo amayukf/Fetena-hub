@@ -275,7 +275,17 @@ export async function resolveActor(
     process.env.NODE_ENV !== 'production' &&
     process.env.ALLOW_ACTOR_IMPERSONATION !== 'false'
   ) {
-    const actorId = req.headers['x-actor-id'] as string;
+    const actorId =
+      (req.headers['x-actor-id'] as string) ||
+      (searchParams ? searchParams.get('actorId') : null) ||
+      (() => {
+        try {
+          const u = new URL(req.url || '', 'http://localhost');
+          return u.searchParams.get('actorId');
+        } catch {
+          return null;
+        }
+      })();
     if (actorId) {
       const user = await prisma.user.findUnique({ where: { id: actorId } });
       if (user && user.deletedAt === null && user.isActive) {
@@ -305,6 +315,8 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     '/api/auth/me',
     '/api/auth/logout',
     '/api/auth/change-password',
+    '/api/auth/google',
+    '/api/auth/google/config',
     '/api/bootstrap',
   ]);
   if (!PASSWORD_CHANGE_ALLOWED_PATHS.has(pathname)) {
@@ -458,7 +470,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       });
 
       const isSecure = process.env.NODE_ENV === 'production';
-      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${isSecure ? '; Secure' : ''}`;
+      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isSecure ? '; Secure' : ''}`;
       return sendJson(res, 201, {
         token: rawToken,
         user: {
@@ -485,10 +497,13 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     if (pathname === '/api/auth/login' && method === 'POST') {
       const ip = getClientIp(req);
       const isProd = process.env.NODE_ENV === 'production';
-      const maxLoginAttempts = isProd ? 5 : 50;
-      const rl = await checkRateLimit(`login:${ip}`, maxLoginAttempts, 900);
-      if (!rl.allowed) {
-        return sendError(res, 429, 'Too many login attempts. Please try again in 15 minutes.');
+
+      // 1. Volumetric network throttle: prevents massive distributed floods or automated bot scans
+      // On shared university Wi-Fi / NAT, 60 requests per 15 minutes allows many students to sign in.
+      const ipMaxAttempts = isProd ? 60 : 100;
+      const ipCheck = await checkRateLimit(`login:ip:${ip}`, ipMaxAttempts, 900);
+      if (!ipCheck.allowed) {
+        return sendError(res, 429, 'Too many login attempts from this network. Please try again in 15 minutes.');
       }
 
       const body = await parseBody(req);
@@ -497,6 +512,22 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
 
       if (!identifier || !password) {
         return sendError(res, 400, 'Identifier (email, student ID, or phone) and password are required.');
+      }
+
+      // 2. Targeted account & composite throttle: strictly protects specific accounts against brute-force/credential-stuffing
+      // Keyed on normalized identifier (lowercase) and combination (ip:identifier)
+      const normalizedId = identifier.toLowerCase();
+      const accountKey = `login:account:${normalizedId}`;
+      const comboKey = `login:combo:${ip}:${normalizedId}`;
+      const maxAccountAttempts = 5;
+
+      const [accountCheck, comboCheck] = await Promise.all([
+        checkRateLimit(accountKey, maxAccountAttempts, 900),
+        checkRateLimit(comboKey, maxAccountAttempts, 900),
+      ]);
+
+      if (!accountCheck.allowed || !comboCheck.allowed) {
+        return sendError(res, 429, 'Too many failed login attempts for this account. Please try again in 15 minutes.');
       }
 
       const phoneVariants = getPhoneVariants(identifier);
@@ -555,11 +586,15 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         },
       });
 
-      // Clear any failed login attempt counters for this IP upon successful authentication
-      await prisma.rateLimit.deleteMany({ where: { key: `login:${ip}` } });
+      // Clear failed login attempt counters for this account upon successful authentication
+      await prisma.rateLimit.deleteMany({
+        where: {
+          key: { in: [accountKey, comboKey, `login:${ip}`] },
+        },
+      });
 
       const isSecure = process.env.NODE_ENV === 'production';
-      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${isSecure ? '; Secure' : ''}`;
+      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isSecure ? '; Secure' : ''}`;
       const streamCode = (user.program?.code as StreamCode) || (user.role === Role.STUDENT ? 'NAT_SCI' : null);
 
       return sendJson(res, 200, {
@@ -577,6 +612,227 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           currentYear: user.currentYear,
           mustChangePassword: user.mustChangePassword,
           canSell: user.canSell,
+        },
+        unlockedProgramTermIds: user.entitlements.map(e => e.programTermId),
+      }, { 'Set-Cookie': cookieHeader });
+    }
+
+    // -------------------------------------------------------------
+    // GET /api/auth/google/config - Google OAuth Client ID Configuration
+    // -------------------------------------------------------------
+    if (pathname === '/api/auth/google/config' && method === 'GET') {
+      const clientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || null;
+      return sendJson(res, 200, {
+        clientId,
+        enabled: Boolean(clientId),
+      });
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/auth/google - Authenticate or Register Student via Google
+    // -------------------------------------------------------------
+    if (pathname === '/api/auth/google' && method === 'POST') {
+      const ip = getClientIp(req);
+      const rl = await checkRateLimit(`google-auth:${ip}`, 30, 900);
+      if (!rl.allowed) {
+        return sendError(res, 429, 'Too many authentication attempts. Please try again later.');
+      }
+
+      const body = await parseBody(req);
+      const credential = body.credential?.trim();
+      const streamCode = (body.stream as StreamCode) || 'NAT_SCI';
+      const devProfile = body.devProfile;
+
+      let googleUser: {
+        sub: string;
+        email: string;
+        name: string;
+        picture?: string;
+      } | null = null;
+
+      const configuredClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+
+      if (credential) {
+        try {
+          const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+          if (!googleRes.ok) {
+            return sendError(res, 401, 'Invalid or expired Google credential token.');
+          }
+          const tokenInfo = (await googleRes.json()) as any;
+
+          if (!tokenInfo.sub || !tokenInfo.email) {
+            return sendError(res, 401, 'Invalid Google token payload.');
+          }
+
+          if (tokenInfo.email_verified !== 'true' && tokenInfo.email_verified !== true) {
+            return sendError(res, 403, 'Your Google email is not verified.');
+          }
+
+          if (configuredClientId && tokenInfo.aud !== configuredClientId) {
+            console.warn('[Google Auth] Warning: token aud does not match GOOGLE_CLIENT_ID');
+            return sendError(res, 401, 'Google Client ID mismatch.');
+          }
+
+          googleUser = {
+            sub: tokenInfo.sub,
+            email: String(tokenInfo.email).toLowerCase().trim(),
+            name: tokenInfo.name || tokenInfo.email.split('@')[0],
+            picture: tokenInfo.picture,
+          };
+        } catch (err: any) {
+          console.error('[Google Auth] Token verification error:', err);
+          return sendError(res, 500, 'Failed to verify Google credential with Google servers.');
+        }
+      } else if (devProfile && process.env.NODE_ENV !== 'production') {
+        if (!devProfile.email || !devProfile.email.includes('@')) {
+          return sendError(res, 400, 'Valid email required for demo profile.');
+        }
+        googleUser = {
+          sub: devProfile.sub || `demo-google-${sha256(devProfile.email).slice(0, 16)}`,
+          email: devProfile.email.toLowerCase().trim(),
+          name: devProfile.name || devProfile.email.split('@')[0],
+          picture: devProfile.picture || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(devProfile.name || devProfile.email)}`,
+        };
+      } else {
+        return sendError(res, 400, 'Google credential token is required.');
+      }
+
+      if (!googleUser || !googleUser.email) {
+        return sendError(res, 400, 'Could not retrieve Google profile details.');
+      }
+
+      let user = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { googleId: googleUser.sub },
+            { email: googleUser.email },
+          ],
+          deletedAt: null,
+        },
+        include: {
+          program: true,
+          entitlements: {
+            where: { isActive: true },
+            select: { programTermId: true },
+          },
+        },
+      });
+
+      let isNewUser = false;
+
+      if (user) {
+        if (!user.isActive) {
+          return sendError(res, 403, 'Account has been deactivated. Please contact campus administration.');
+        }
+
+        const needsUpdate = !user.googleId || (!user.avatarUrl && googleUser.picture);
+        if (needsUpdate) {
+          user = await prisma.user.update({
+            where: { id: user.id },
+            data: {
+              googleId: user.googleId || googleUser.sub,
+              avatarUrl: user.avatarUrl || googleUser.picture || null,
+              isVerified: true,
+            },
+            include: {
+              program: true,
+              entitlements: {
+                where: { isActive: true },
+                select: { programTermId: true },
+              },
+            },
+          });
+        }
+      } else {
+        isNewUser = true;
+        const program = (await prisma.program.findFirst({
+          where: { code: streamCode, campus: { code: { in: ['AMBO', 'WOLISO'] } } },
+        })) ?? (await prisma.program.findFirst({
+          where: { code: streamCode },
+        }));
+
+        const randomPassword = crypto.randomUUID() + crypto.randomBytes(32).toString('hex');
+        const passwordHash = await bcrypt.hash(randomPassword, 10);
+
+        user = await prisma.user.create({
+          data: {
+            fullName: googleUser.name,
+            email: googleUser.email,
+            googleId: googleUser.sub,
+            avatarUrl: googleUser.picture || null,
+            role: Role.STUDENT,
+            programId: program?.id || null,
+            currentYear: 1,
+            isVerified: true,
+            canSell: true,
+            isActive: true,
+            passwordHash,
+          },
+          include: {
+            program: true,
+            entitlements: true,
+          },
+        });
+      }
+
+      const activeSessions = await prisma.session.findMany({
+        where: { userId: user.id, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      if (activeSessions.length >= 2) {
+        await prisma.session.delete({ where: { id: activeSessions[0].id } });
+      }
+
+      const rawToken = crypto.randomUUID();
+      const sessionTokenHash = sha256(rawToken);
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      await prisma.session.create({
+        data: {
+          userId: user.id,
+          sessionTokenHash,
+          ipAddress: ip,
+          userAgent: (req.headers['user-agent'] as string) || 'Browser',
+          expiresAt,
+        },
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          action: isNewUser ? 'Student registered account via Google' : 'Student logged in with Google',
+          entityType: 'User',
+          entityId: user.id,
+          actorId: user.id,
+          riskLevel: AuditRiskLevel.LOW,
+          details: {
+            fullName: user.fullName,
+            email: user.email,
+            googleId: googleUser.sub,
+            isNewAccount: isNewUser,
+          },
+        },
+      });
+
+      const isSecure = process.env.NODE_ENV === 'production';
+      const cookieHeader = `examvault_session=${rawToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isSecure ? '; Secure' : ''}`;
+      const resolvedStream = (user.program?.code as StreamCode) || streamCode || 'NAT_SCI';
+
+      return sendJson(res, isNewUser ? 201 : 200, {
+        token: rawToken,
+        user: {
+          id: user.id,
+          userId: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          phone: user.phone,
+          studentId: user.studentId,
+          role: user.role,
+          stream: resolvedStream,
+          programId: user.programId,
+          currentYear: user.currentYear,
+          mustChangePassword: user.mustChangePassword,
+          canSell: user.canSell,
+          avatarUrl: user.avatarUrl,
         },
         unlockedProgramTermIds: user.entitlements.map(e => e.programTermId),
       }, { 'Set-Cookie': cookieHeader });
@@ -1266,32 +1522,71 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendJson(res, 200, { ...resubmittedPayment, payment: resubmittedPayment });
       }
 
-      // Fresh payment submission
-      const referenceCode = `EV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      // Fresh payment submission with collision-safe generation and retry loop
+      let payment: any = null;
+      let attempts = 0;
+      const maxAttempts = 5;
 
-      const payment = await prisma.payment.create({
-        data: {
-          referenceCode,
-          userId,
-          programTermId: targetProgramTermId,
-          amountEtb: serverAmountEtb, // Server computed from database
-          paymentMethod,
-          transactionId,
-          screenshotKey,
-          screenshotSha256,
-          resubmitCount: 0,
-          status: PaymentStatus.PENDING,
-        },
-        include: {
-          user: true,
-          programTerm: {
-            include: {
-              program: true,
-              term: true,
+      while (attempts < maxAttempts) {
+        attempts++;
+        // Generate high-entropy reference code (e.g. EV-2026-X8K9M4)
+        const year = new Date().getFullYear();
+        const randChars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+        const randBytes = crypto.randomBytes(6);
+        let entropy = '';
+        for (let i = 0; i < 6; i++) {
+          entropy += randChars[randBytes[i] % randChars.length];
+        }
+        const referenceCode = `EV-${year}-${entropy}`;
+
+        try {
+          payment = await prisma.payment.create({
+            data: {
+              referenceCode,
+              userId,
+              programTermId: targetProgramTermId,
+              amountEtb: serverAmountEtb, // Server computed from database
+              paymentMethod,
+              transactionId,
+              screenshotKey,
+              screenshotSha256,
+              resubmitCount: 0,
+              status: PaymentStatus.PENDING,
             },
-          },
-        },
-      });
+            include: {
+              user: true,
+              programTerm: {
+                include: {
+                  program: true,
+                  term: true,
+                },
+              },
+            },
+          });
+          break; // Successfully created
+        } catch (err: any) {
+          // If unique constraint violation on referenceCode (P2002), retry with a new code
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+            const target = (err.meta?.target as string[]) || [];
+            const metaStr = JSON.stringify(err.meta || {});
+            if (target.includes('referenceCode') || metaStr.includes('referenceCode')) {
+              if (attempts < maxAttempts) continue;
+            }
+            if (target.includes('paymentMethod_transactionId') || metaStr.includes('transactionId')) {
+              return sendError(
+                res,
+                409,
+                `Transaction ID ${transactionId} has already been submitted for ${paymentMethod}. Duplicate references are rejected.`
+              );
+            }
+          }
+          throw err;
+        }
+      }
+
+      if (!payment) {
+        return sendError(res, 500, 'Failed to generate a unique payment reference. Please retry.');
+      }
 
       // Trigger Notification Hook
       await dispatchNotification(
@@ -2642,11 +2937,23 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       await storage.upload(storageKey, buf, validation.detectedMime);
       const fileSha256 = sha256(buf);
 
+      let pageCount: number | undefined;
+      if (validation.detectedMime === 'application/pdf') {
+        try {
+          pageCount = await getDocumentPageCount(buf);
+        } catch (err) {
+          console.warn('Could not extract PDF page count in /api/upload:', err);
+        }
+      } else {
+        pageCount = 1;
+      }
+
       return sendJson(res, 201, {
         storageKey,
         sha256: fileSha256,
         mimeType: validation.detectedMime,
         sizeBytes: buf.byteLength,
+        pageCount,
       });
     }
 
@@ -2869,19 +3176,40 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       if (!authorized) {
         const actor = await resolveActor(req);
         if (actor) {
-          if (
-            actor.role === Role.ADMIN ||
-            actor.role === Role.PAYMENT_VERIFIER ||
-            actor.role === Role.CONTENT_MANAGER
-          ) {
+          if (actor.role === Role.ADMIN) {
+            // ADMIN has full administrative oversight across published assets and quarantine
             authorized = true;
-          } else if (actor.role === Role.STUDENT) {
-            // SECURITY: students may only read their own uploaded receipts and
-            // submissions. Published paper assets are available through the
-            // authenticated, entitlement-checked rendered-page route.
-            if (key.startsWith('quarantine/')) {
+          } else if (key.startsWith('published/')) {
+            // SECURITY: Non-admin staff (Payment Verifiers, Content Managers) and Students
+            // must NEVER download raw, unwatermarked master exam PDFs directly.
+            // Students read watermarked pages through the entitlement-verified page viewer.
+            authorized = false;
+          } else if (key.startsWith('quarantine/')) {
+            if (actor.role === Role.PAYMENT_VERIFIER) {
+              // Payment verifiers may ONLY inspect payment receipts in quarantine
+              const isPaymentReceipt = await prisma.payment.findFirst({
+                where: { screenshotKey: key },
+                select: { id: true },
+              });
+              if (isPaymentReceipt) {
+                authorized = true;
+              }
+            } else if (actor.role === Role.CONTENT_MANAGER) {
+              // Content managers may ONLY inspect paper contributions and draft paper uploads in quarantine.
+              // They must NOT access private student payment receipts.
+              const isContribution = await prisma.contributionFile.findFirst({
+                where: { storageKey: key },
+                select: { id: true },
+              });
+              const isOwnDraft = key.startsWith(`quarantine/uploads/${actor.id}/`);
+              if (isContribution || isOwnDraft) {
+                authorized = true;
+              }
+            } else if (actor.role === Role.STUDENT) {
+              // SECURITY: students may only read their own uploaded receipts and submissions.
               const ownPayment = await prisma.payment.findFirst({
                 where: { screenshotKey: key, userId: actor.id },
+                select: { id: true },
               });
               const ownContrib = !ownPayment
                 ? await prisma.paperContribution.findFirst({
@@ -2889,6 +3217,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
                       studentId: actor.id,
                       files: { some: { storageKey: key } },
                     },
+                    select: { id: true },
                   })
                 : null;
               if (ownPayment || ownContrib) {
@@ -2933,7 +3262,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 400, 'Page number must be a positive integer.');
       }
 
-      const actor = await resolveActor(req);
+      const actor = await resolveActor(req, undefined, url.searchParams);
       if (!actor || !actor.user) {
         return sendError(res, 401, 'Authentication required to view exam pages.');
       }
@@ -2999,7 +3328,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       let renderedPage = await storage.download(pageKey);
       let pageCount: number;
       if (renderedPage) {
-        pageCount = await getDocumentPageCount(source);
+        pageCount = paper.pageCount && paper.pageCount >= 1 ? paper.pageCount : await getDocumentPageCount(source);
         if (pageNum > pageCount) {
           return sendError(res, 416, `Requested page exceeds the document's ${pageCount} pages.`);
         }
@@ -3253,17 +3582,20 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           generateRandomStorageKey('published', 'pdf', course.code.replace(/\s+/g, ''));
 
         let hasBin = await storage.exists(finalStorageKey);
+        let binData: Uint8Array | null = null;
         if (!hasBin) {
           if (itemKey && (await storage.exists(itemKey))) {
             const data = await storage.download(itemKey);
             if (data) {
               await storage.upload(finalStorageKey, data, mimeType);
               hasBin = true;
+              binData = data;
             }
           } else if (item.fileBase64) {
             const buf = Buffer.from(item.fileBase64, 'base64');
             await storage.upload(finalStorageKey, buf, mimeType);
             hasBin = true;
+            binData = buf;
           } else {
             return sendError(
               res,
@@ -3273,6 +3605,23 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           }
         }
 
+        // Accurately measure exact PDF page count from the stored binary
+        let exactPageCount = Number(pageCountInput) || 0;
+        if (!binData) {
+          binData = await storage.download(finalStorageKey);
+        }
+        if (binData) {
+          try {
+            const measured = await getDocumentPageCount(binData);
+            if (measured > 0) exactPageCount = measured;
+          } catch (err) {
+            console.warn('Failed to parse PDF page count in /api/papers:', err);
+          }
+        }
+        if (exactPageCount < 1) {
+          exactPageCount = estimatePageCount(fileSizeBytes);
+        }
+
         const paper = await prisma.examPaper.create({
           data: {
             courseId,
@@ -3280,7 +3629,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             examType: examType as ExamType,
             examYearEc: Number(examYearEc),
             quality: quality as ScanQuality,
-            pageCount: Number(pageCountInput) || estimatePageCount(fileSizeBytes),
+            pageCount: exactPageCount,
             storageKey: finalStorageKey,
             sha256: paperSha,
             mimeType,
@@ -3448,6 +3797,17 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         );
       }
 
+      let finalPageCount = existing.pageCount;
+      try {
+        const fileData = await storage.download(finalStorageKey);
+        if (fileData) {
+          const parsedCount = await getDocumentPageCount(fileData);
+          if (parsedCount > 0) finalPageCount = parsedCount;
+        }
+      } catch (err) {
+        console.warn('Failed to parse page count on replace-file:', err);
+      }
+
       const updated = await prisma.examPaper.update({
         where: { id: paperId },
         data: {
@@ -3455,6 +3815,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           sha256: finalSha256,
           mimeType: finalMime,
           fileSizeBytes: finalSize,
+          pageCount: finalPageCount,
         },
         include: { course: true },
       });
@@ -3785,6 +4146,27 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         }
       }
 
+      // Prevent accidental demotion or deactivation of the last active administrator
+      const willDemote = body.role !== undefined && body.role !== Role.ADMIN;
+      const willDeactivate = body.isActive === false;
+
+      if ((willDemote || willDeactivate) && user.role === Role.ADMIN && user.isActive) {
+        const activeAdminCount = await prisma.user.count({
+          where: {
+            role: Role.ADMIN,
+            isActive: true,
+            deletedAt: null,
+          },
+        });
+        if (activeAdminCount <= 1) {
+          return sendError(
+            res,
+            400,
+            'Cannot demote or deactivate the last remaining active administrator.'
+          );
+        }
+      }
+
       const updated = await prisma.user.update({
         where: { id: targetUserId },
         data: {
@@ -3819,6 +4201,18 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       });
 
       return sendJson(res, 200, updated);
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/admin/housekeeping - Run Automated Database Maintenance
+    // -------------------------------------------------------------
+    if (pathname === '/api/admin/housekeeping' && method === 'POST') {
+      const actor = await resolveActor(req);
+      if (!actor || actor.role !== Role.ADMIN) {
+        return sendError(res, 403, 'Permission denied: Only administrators can trigger maintenance.');
+      }
+      const results = await runAutomatedHousekeeping();
+      return sendJson(res, 200, { success: true, ...results });
     }
 
     // -------------------------------------------------------------
@@ -3868,3 +4262,47 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     return sendError(res, 500, error.message || 'Internal server error');
   }
 }
+
+/**
+ * Automated database housekeeping:
+ * Deletes expired user sessions, expired rate limits, and stale password reset tokens
+ * to maintain high query throughput and compact table sizes.
+ */
+export async function runAutomatedHousekeeping(): Promise<{
+  expiredSessions: number;
+  expiredRateLimits: number;
+  expiredResetTokens: number;
+}> {
+  const now = new Date();
+  try {
+    const [sessions, rateLimits, resetTokens] = await Promise.all([
+      prisma.session.deleteMany({
+        where: { expiresAt: { lt: now } },
+      }),
+      prisma.rateLimit.deleteMany({
+        where: { expireAt: { lt: now } },
+      }),
+      prisma.passwordResetToken.deleteMany({
+        where: {
+          OR: [
+            { expiresAt: { lt: now } },
+            { usedAt: { lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
+          ],
+        },
+      }),
+    ]);
+    return {
+      expiredSessions: sessions.count,
+      expiredRateLimits: rateLimits.count,
+      expiredResetTokens: resetTokens.count,
+    };
+  } catch (err) {
+    console.error('[Housekeeping error]', err);
+    return {
+      expiredSessions: 0,
+      expiredRateLimits: 0,
+      expiredResetTokens: 0,
+    };
+  }
+}
+

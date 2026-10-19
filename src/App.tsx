@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useEffect, type ReactNode, type ChangeEvent } from "react";
+import { useMemo, useState, useRef, useEffect, Suspense, lazy, type ReactNode, type ChangeEvent } from "react";
 import theme from "./tokens/theme";
 import { api, setUnauthorizedHandler, type BootstrapData } from "./lib/api";
 import {
@@ -25,14 +25,14 @@ import {
   type StoreNotification,
 } from "./lib/store";
 import type { UserSession, PaymentMethod, StreamCode, TermInterestRecord, Role, ExamType } from "./types";
-import AccessDenied from "./components/admin/AccessDenied";
-import AdminDashboard from "./components/admin/AdminDashboard";
-import CoverageMatrix from "./components/admin/CoverageMatrix";
-import PapersManager from "./components/admin/PapersManager";
-import WantedPapersManager from "./components/admin/WantedPapersManager";
-import UsersManager from "./components/admin/UsersManager";
-import AuditLogViewer from "./components/admin/AuditLogViewer";
-import SettingsManager from "./components/admin/SettingsManager";
+const AccessDenied = lazy(() => import("./components/admin/AccessDenied"));
+const AdminDashboard = lazy(() => import("./components/admin/AdminDashboard"));
+const CoverageMatrix = lazy(() => import("./components/admin/CoverageMatrix"));
+const PapersManager = lazy(() => import("./components/admin/PapersManager"));
+const WantedPapersManager = lazy(() => import("./components/admin/WantedPapersManager"));
+const UsersManager = lazy(() => import("./components/admin/UsersManager"));
+const AuditLogViewer = lazy(() => import("./components/admin/AuditLogViewer"));
+const SettingsManager = lazy(() => import("./components/admin/SettingsManager"));
 import { TermsPage, PrivacyPage, ContactPage, ForbiddenPage, NotFoundPage, ForcePasswordChangeModal } from "./components/LegalPages";
 
 const isDev = import.meta.env.DEV || (typeof process !== "undefined" && process.env?.NODE_ENV === "development");
@@ -120,7 +120,19 @@ export function Card({ children, className = "", style }: { children: ReactNode;
 }
 
 export function Logo({ compact = false }: { compact?: boolean }) {
-  return <div className="logo"><span className="logo-mark"><Icon name="vault" size={20}/></span>{!compact && <span>{theme.constants.appName}</span>}</div>;
+  return (
+    <div className="logo">
+      <span className="logo-mark" title="Fetena Hub">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path d="M5 4.5C5 3.67 5.67 3 6.5 3H7.5C8.33 3 9 3.67 9 4.5V20.5C9 21.33 8.33 22 7.5 22H6.5C5.67 22 5 21.33 5 20.5V4.5Z" fill="currentColor"/>
+          <path d="M5 5C5 3.9 5.9 3 7 3H18.5C19.6 3 20.5 3.9 20.5 5C20.5 6.1 19.6 7 18.5 7H7C5.9 7 5 6.1 5 5Z" fill="currentColor"/>
+          <path d="M5 11.5C5 10.67 5.67 10 6.5 10H14.5C15.33 10 16 10.67 16 11.5C16 12.33 15.33 13 14.5 13H6.5C5.67 13 5 12.33 5 11.5Z" fill="#FBBF24"/>
+          <path d="M20 9L20.8 11.2L23 12L20.8 12.8L20 15L19.2 12.8L17 12L19.2 11.2Z" fill="#FBBF24"/>
+        </svg>
+      </span>
+      {!compact && <span>{theme.constants.appName}</span>}
+    </div>
+  );
 }
 
 const studentNav: Array<[Screen, IconName, string]> = [
@@ -488,7 +500,7 @@ function Landing({
           "What does the 50 ETB payment include?",
           "How long does payment verification take?",
           "Can I access papers on a basic smartphone?",
-          "Can I sell past exam papers I have to ExamVault?",
+          "Can I sell past exam papers I have to Fetena Hub?",
         ].map((q, i) => (
           <details key={q} open={i === 0}>
             <summary>{q}<span>+</span></summary>
@@ -498,7 +510,7 @@ function Landing({
                 : i === 1
                 ? "Payments submitted with a Telebirr or CBE Birr screenshot and reference ID are reviewed and approved within 15–30 minutes."
                 : i === 2
-                ? "Yes! ExamVault is mobile-first, lightweight, and works seamlessly even on low-bandwidth 3G campus connections."
+                ? "Yes! Fetena Hub is mobile-first, lightweight, and works seamlessly even on low-bandwidth 3G campus connections."
                 : "Yes! Use the 'Contribute a paper' tab in Requests. Admin will inspect the scan, offer an agreed buyout in ETB, and pay directly to your Telebirr or CBE account."}
             </p>
           </details>
@@ -515,7 +527,7 @@ function Landing({
         <button onClick={() => go("contact")}>Contact</button>
         <button onClick={() => go("admin-login")} style={{ fontWeight: 600, color: "var(--primary)" }}>Staff Portal</button>
       </div>
-      <small>© 2026 ExamVault · Ambo University</small>
+      <small>© 2026 Fetena Hub · Ambo University</small>
     </footer>
   </div>;
 }
@@ -537,6 +549,87 @@ function Auth({
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleConfig, setGoogleConfig] = useState<{ clientId: string | null; enabled: boolean } | null>(null);
+  const [showDemoPrompt, setShowDemoPrompt] = useState(false);
+  const [demoEmail, setDemoEmail] = useState("student.demo@ambo.edu.et");
+  const [demoName, setDemoName] = useState("Abebe Bikila");
+
+  useEffect(() => {
+    if (!admin) {
+      api.getGoogleConfig().then((cfg) => {
+        setGoogleConfig(cfg);
+        if (cfg?.clientId) {
+          if (!document.getElementById("google-gsi-client")) {
+            const script = document.createElement("script");
+            script.id = "google-gsi-client";
+            script.src = "https://accounts.google.com/gsi/client";
+            script.async = true;
+            script.defer = true;
+            document.body.appendChild(script);
+          }
+        }
+      }).catch(() => {});
+    }
+  }, [admin]);
+
+  const processGoogleAuth = async (payload: { credential?: string; devProfile?: any }) => {
+    setGoogleLoading(true);
+    setError(null);
+    try {
+      const res = await api.googleAuth({
+        ...payload,
+        stream,
+      });
+
+      const userSession: UserSession = {
+        userId: res.user.userId || res.user.id,
+        fullName: res.user.fullName,
+        email: res.user.email || null,
+        phone: res.user.phone || null,
+        role: res.user.role as Role,
+        programId: res.user.programId || null,
+        studentId: res.user.studentId || null,
+        stream: (res.user.stream as StreamCode) || (res.user.program?.code as StreamCode) || stream || "NAT_SCI",
+        currentYear: res.user.currentYear || 1,
+        avatarUrl: res.user.avatarUrl || null,
+      };
+
+      onAuthSuccess(userSession, false);
+      go("dashboard");
+    } catch (err: any) {
+      setError(err.message || "Google authentication failed.");
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    const win = window as any;
+
+    if (googleConfig?.clientId && win.google?.accounts?.id) {
+      setGoogleLoading(true);
+      try {
+        win.google.accounts.id.initialize({
+          client_id: googleConfig.clientId,
+          callback: async (response: any) => {
+            if (response.credential) {
+              await processGoogleAuth({ credential: response.credential });
+            }
+          },
+        });
+        win.google.accounts.id.prompt();
+      } catch (err: any) {
+        setError(err.message || "Failed to initialize Google Sign In.");
+      } finally {
+        setGoogleLoading(false);
+      }
+      return;
+    }
+
+    setShowDemoPrompt(true);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -632,11 +725,86 @@ function Auth({
       <Card>
         <button className="back-link" onClick={() => go("landing")}>← Back to home</button>
         <Heading level={2}>{signup ? "Create your student account" : admin ? "Admin sign in" : "Welcome back"}</Heading>
-        <p>{signup ? "Join Ambo University students preparing for Freshman examinations." : "Enter your credentials to continue to ExamVault."}</p>
+        <p>{signup ? "Join Ambo University students preparing for Freshman examinations." : "Enter your credentials to continue to Fetena Hub."}</p>
 
         {error && (
           <div className="alert danger" style={{ margin: "14px 0" }}>
             <span>{error}</span>
+          </div>
+        )}
+
+        {!admin && (
+          <div style={{ margin: "20px 0 16px 0" }}>
+            {signup && (
+              <div style={{ marginBottom: "14px" }}>
+                <Select label="Curriculum Stream" value={stream} onChange={e => setStream(e.target.value as StreamCode)}>
+                  <option value="NAT_SCI">Natural Science Stream</option>
+                  <option value="SOC_SCI">Social Science Stream</option>
+                </Select>
+              </div>
+            )}
+            <button
+              type="button"
+              className="google-btn"
+              onClick={handleGoogleSignIn}
+              disabled={loading || googleLoading}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+              </svg>
+              <span>{googleLoading ? "Connecting with Google..." : signup ? "Create account with Google" : "Continue with Google"}</span>
+            </button>
+
+            {showDemoPrompt && (
+              <div className="google-demo-box">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+                  <strong>💡 Google OAuth Quick Connect</strong>
+                  <button
+                    type="button"
+                    onClick={() => setShowDemoPrompt(false)}
+                    style={{ border: "none", background: "none", cursor: "pointer", fontSize: "1.1rem", color: "#166534" }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <p style={{ margin: "0 0 10px 0", lineHeight: "1.4" }}>
+                  Google OAuth Client ID can be set in <code>.env</code> for production. You can test one-click sign in below:
+                </p>
+                <div style={{ background: "white", padding: "10px", borderRadius: "6px", border: "1px solid #bbf7d0", marginBottom: "10px" }}>
+                  <label style={{ display: "block", fontSize: "0.75rem", fontWeight: "bold", marginBottom: "4px", color: "#374151" }}>Full Name:</label>
+                  <input
+                    type="text"
+                    value={demoName}
+                    onChange={e => setDemoName(e.target.value)}
+                    placeholder="Full Name"
+                    style={{ width: "100%", padding: "6px 8px", fontSize: "0.85rem", marginBottom: "8px", border: "1px solid #d1d5db", borderRadius: "4px" }}
+                  />
+                  <label style={{ display: "block", fontSize: "0.75rem", fontWeight: "bold", marginBottom: "4px", color: "#374151" }}>Google Email:</label>
+                  <input
+                    type="email"
+                    value={demoEmail}
+                    onChange={e => setDemoEmail(e.target.value)}
+                    placeholder="student@gmail.com"
+                    style={{ width: "100%", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #d1d5db", borderRadius: "4px" }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="btn primary full"
+                  style={{ padding: "8px 12px", fontSize: "0.85rem", cursor: "pointer" }}
+                  onClick={() => processGoogleAuth({ devProfile: { email: demoEmail, name: demoName } })}
+                >
+                  Confirm & Continue as {demoName.split(" ")[0] || "Student"} →
+                </button>
+              </div>
+            )}
+
+            <div className="auth-separator">
+              <span>OR {signup ? "SIGN UP WITH" : "SIGN IN WITH"} PASSWORD</span>
+            </div>
           </div>
         )}
 
@@ -688,7 +856,7 @@ function Auth({
         {!admin ? (
           <>
             <p className="auth-switch">
-              {signup ? "Already have an account?" : "New to ExamVault?"}{" "}
+              {signup ? "Already have an account?" : "New to Fetena Hub?"}{" "}
               <button onClick={() => { setError(null); go(signup ? "login" : "signup"); }}>
                 {signup ? "Log in" : "Create an account"}
               </button>
@@ -874,7 +1042,7 @@ function Browse({
   return <>
     <PageHead
       eyebrow="AMBO UNIVERSITY"
-      title="Freshman Exam Vault"
+      title="Freshman Fetena Hub"
       text="Find previous exam papers for your freshman stream (Natural Science or Social Science)."
     />
     <div className="stepper">
@@ -1200,7 +1368,7 @@ function Course({
         <Icon name="file" size={40}/>
         <Heading level={2}>No exam papers uploaded yet</Heading>
         <p style={{ color: "var(--muted)", maxWidth: "460px", margin: "8px auto 20px" }}>
-          We don't have digitized papers for {course.code} yet. Do you have a copy of a mid or final exam? Sell it to ExamVault for cash!
+          We don't have digitized papers for {course.code} yet. Do you have a copy of a mid or final exam? Sell it to Fetena Hub for cash!
         </p>
         <Button onClick={() => go("requests")} icon="upload">
           Sell this paper to Admin
@@ -1248,7 +1416,7 @@ function Course({
       <div className="card-icon"><Icon name="help"/></div>
       <div>
         <Heading level={3}>Have past exams for {course.code}?</Heading>
-        <p>Sell physical or photographed exam papers you hold to ExamVault Admin for a direct cash payout via Telebirr or CBE.</p>
+        <p>Sell physical or photographed exam papers you hold to Fetena Hub Admin for a direct cash payout via Telebirr or CBE.</p>
       </div>
       <Button variant="secondary" onClick={() => go("requests")}>Sell a paper</Button>
     </Card>
@@ -1438,7 +1606,7 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
           ) : paper && accessState?.allowed ? (
             <img
               key={`${paper.id}-${page}-${pageRequestVersion}`}
-              src={`/api/papers/${encodeURIComponent(paper.id)}/pages/${page}`}
+              src={`/api/papers/${encodeURIComponent(paper.id)}/pages/${page}?userId=${encodeURIComponent(currentUser.userId)}`}
               alt={`${paper.title}, page ${page}`}
               draggable={false}
               onLoad={() => setPageLoading(false)}
@@ -1477,7 +1645,7 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
               <button className="icon-btn" onClick={() => setShowReportModal(false)}><Icon name="close"/></button>
             </div>
             <p style={{ color: "var(--muted)", margin: "8px 0 16px", fontSize: "14px" }}>
-              Help improve the ExamVault archive for Ambo University. Let our content moderators know what is wrong with this paper.
+              Help improve the Fetena Hub archive for Ambo University. Let our content moderators know what is wrong with this paper.
             </p>
             {reportFeedback ? (
               <div style={{ padding: "16px", background: "rgba(12, 74, 52, 0.08)", borderRadius: "8px", color: "var(--primary)" }}>
@@ -1822,13 +1990,13 @@ function Checkout({
                 type="file"
                 ref={fileInputRef}
                 style={{ display: "none" }}
-                accept="image/png,image/jpeg"
+                accept="image/png,image/jpeg,application/pdf"
                 onChange={handleFileChange}
                 disabled={!isMethodConfigured}
               />
               <Icon name="image" size={32}/>
               <strong>Upload payment receipt screenshot</strong>
-              <small>{screenshotName ? `${screenshotName} (ready)` : "PNG or JPG, up to 5 MB"}</small>
+              <small>{screenshotName ? `${screenshotName} (ready)` : "PNG, JPG, or PDF up to 5 MB"}</small>
               <Button
                 variant="secondary"
                 onClick={() => fileInputRef.current?.click()}
@@ -2253,7 +2421,7 @@ function Requests({
         </>
       ) : tab === "upload" ? (
         <form onSubmit={handleSellSubmit}>
-          <Heading level={2}>Sell an exam paper to ExamVault Admin</Heading>
+          <Heading level={2}>Sell an exam paper to Fetena Hub Admin</Heading>
           <p>We purchase clear mid and final exams from students. Once verified, payout is sent directly to your Telebirr or CBE account.</p>
 
           <div className="upload-box large" style={{ cursor: "pointer" }} onClick={() => fileRef.current?.click()}>
@@ -2618,7 +2786,7 @@ function AdminTable({
                   <td>
                     {p.screenshotUrl ? (
                       <span className="selected-file-badge" style={{ cursor: "pointer" }} onClick={() => onReviewPayment(p)}>
-                        <Icon name="image" size={14}/> View proof
+                        <Icon name={p.screenshotUrl?.toLowerCase().includes('.pdf') ? "file" : "image"} size={14}/> View proof
                       </span>
                     ) : "None"}
                     {p.hasDuplicateScreenshot && (
@@ -2661,7 +2829,7 @@ function AdminTable({
       <PageHead
         eyebrow="ADMINISTRATION"
         title="Student paper contributions & buybacks"
-        text="Review exam papers submitted by students to sell to ExamVault. Verify legibility, negotiate payout, and publish."
+        text="Review exam papers submitted by students to sell to Fetena Hub. Verify legibility, negotiate payout, and publish."
         action={<Button icon="upload" onClick={() => alert("Upload new verified paper.")}>Direct upload</Button>}
       />
       <Card className="table-card">
@@ -3062,6 +3230,39 @@ export default function App() {
     });
     return () => setUnauthorizedHandler(null);
   }, []);
+
+  // Synchronize browser tab title with active view
+  useEffect(() => {
+    const titles: Partial<Record<Screen, string>> = {
+      landing: "Fetena Hub | Ambo University Past Exam Papers",
+      browse: "Browse Courses | Fetena Hub",
+      course: selectedCourse ? `${selectedCourse.code} Papers | Fetena Hub` : "Course Papers | Fetena Hub",
+      viewer: selectedPaper ? `${selectedPaper.title} | Fetena Hub` : "Exam Viewer | Fetena Hub",
+      checkout: "Unlock Semester | Fetena Hub",
+      dashboard: "Student Dashboard | Fetena Hub",
+      payments: "Payment History | Fetena Hub",
+      requests: "Paper Requests & Buyback | Fetena Hub",
+      notifications: "Notifications | Fetena Hub",
+      profile: "Student Profile | Fetena Hub",
+      help: "Help & FAQ | Fetena Hub",
+      privacy: "Privacy Policy | Fetena Hub",
+      terms: "Terms of Service | Fetena Hub",
+      contact: "Contact Us | Fetena Hub",
+      login: "Student Sign In | Fetena Hub",
+      signup: "Create Account | Fetena Hub",
+      "admin-login": "Staff Sign In | Fetena Hub",
+      admin: "Admin Overview | Fetena Hub",
+      papers: "Papers Manager | Fetena Hub",
+      users: "Users Manager | Fetena Hub",
+      audit: "Audit Log | Fetena Hub",
+      settings: "Platform Settings | Fetena Hub",
+      structure: "Academic Structure | Fetena Hub",
+      contributions: "Paper Buybacks | Fetena Hub",
+      "paper-requests": "Wanted Requests | Fetena Hub",
+      "admin-payments": "Payment Verification | Fetena Hub",
+    };
+    document.title = titles[screen] || "Fetena Hub | Ambo University";
+  }, [screen, selectedCourse, selectedPaper]);
 
   const go = (s: Screen) => {
     setScreen(s);
@@ -3873,7 +4074,7 @@ export default function App() {
       <div className="standalone-state" style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center" }}>
           <Logo/>
-          <p style={{ marginTop: "16px", color: "var(--muted)" }}>Connecting to ExamVault archive...</p>
+          <p style={{ marginTop: "16px", color: "var(--muted)" }}>Connecting to Fetena Hub archive...</p>
         </div>
       </div>
     );
@@ -3946,11 +4147,13 @@ export default function App() {
   if (adminScreens.includes(screen) && !canAccessAdminScreen(currentUser.role, screen)) {
     return (
       <Shell screen={screen} go={go} currentUser={currentUser} onLogout={handleLogout}>
-        <AccessDenied
-          title={`Access Restricted for ${currentUser.role.replace("_", " ")}`}
-          message={`Your role (${currentUser.role.replace("_", " ")}) is not authorized to open this section. Ask an administrator if you need access.`}
-          onGoBack={() => go("admin")}
-        />
+        <Suspense fallback={<div style={{ padding: "48px 24px", textAlign: "center", color: "var(--muted)" }}>Checking access...</div>}>
+          <AccessDenied
+            title={`Access Restricted for ${currentUser.role.replace("_", " ")}`}
+            message={`Your role (${currentUser.role.replace("_", " ")}) is not authorized to open this section. Ask an administrator if you need access.`}
+            onGoBack={() => go("admin")}
+          />
+        </Suspense>
       </Shell>
     );
   }
@@ -4094,7 +4297,9 @@ export default function App() {
         unreadNotifsCount={notifications.filter(n => !n.read).length}
         onLogout={handleLogout}
       >
-        {content}
+        <Suspense fallback={<div style={{ padding: "48px 24px", textAlign: "center", color: "var(--muted)" }}>Loading view...</div>}>
+          {content}
+        </Suspense>
       </Shell>
 
       {/* Force Password Change Modal (First login for admin or temporary passwords) */}
@@ -4199,23 +4404,81 @@ export default function App() {
                   Uploaded Payment Screenshot:
                 </label>
                 <div className="screenshot-preview-box">
-                  {Boolean(reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl) ? (
-                    <img
-                      src={
-                        (reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '').startsWith('http') ||
-                        (reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '').startsWith('data:') ||
-                        (reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '').startsWith('/api/')
-                          ? (reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '')
-                          : `/api/storage/view?key=${encodeURIComponent(reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '')}`
-                      }
-                      alt="Payment receipt proof"
-                      onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
-                        const fallback = (e.target as HTMLElement).parentElement?.querySelector('.receipt-missing');
-                        if (fallback) (fallback as HTMLElement).style.display = 'flex';
-                      }}
-                    />
-                  ) : null}
+                  {(() => {
+                    const rawKey = reviewingPayment.screenshotKey || reviewingPayment.screenshotUrl || '';
+                    if (!rawKey) return null;
+                    const receiptUrl = rawKey.startsWith('http') || rawKey.startsWith('data:') || rawKey.startsWith('/api/')
+                      ? rawKey
+                      : `/api/storage/view?key=${encodeURIComponent(rawKey)}`;
+                    const isPdf = rawKey.toLowerCase().endsWith('.pdf') || rawKey.toLowerCase().includes('.pdf') || receiptUrl.toLowerCase().includes('.pdf');
+
+                    if (isPdf) {
+                      return (
+                        <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "8px" }}>
+                          <iframe
+                            src={receiptUrl}
+                            title="Payment receipt PDF"
+                            style={{
+                              width: "100%",
+                              height: "440px",
+                              border: "1px solid var(--border)",
+                              borderRadius: "8px",
+                              background: "#ffffff",
+                            }}
+                          />
+                          <div style={{ textAlign: "right" }}>
+                            <a
+                              href={receiptUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                fontSize: "0.85rem",
+                                color: "var(--primary)",
+                                textDecoration: "none",
+                                fontWeight: 600,
+                              }}
+                            >
+                              <Icon name="arrow" size={14} /> Open PDF in new tab
+                            </a>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <>
+                        <img
+                          src={receiptUrl}
+                          alt="Payment receipt proof"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                            const fallback = (e.target as HTMLElement).parentElement?.querySelector('.receipt-missing');
+                            if (fallback) (fallback as HTMLElement).style.display = 'flex';
+                          }}
+                        />
+                        <div style={{ marginTop: "6px", textAlign: "right" }}>
+                          <a
+                            href={receiptUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              fontSize: "0.8rem",
+                              color: "var(--muted)",
+                              textDecoration: "none",
+                            }}
+                          >
+                            <Icon name="eye" size={12} /> Open full image
+                          </a>
+                        </div>
+                      </>
+                    );
+                  })()}
                   <div
                     className="receipt-missing"
                     style={{
@@ -4231,7 +4494,7 @@ export default function App() {
                     }}
                   >
                     <Icon name="help" size={24} />
-                    <span>Receipt image missing from secure storage</span>
+                    <span>Receipt file missing from secure storage or failed to load</span>
                   </div>
                 </div>
               </div>

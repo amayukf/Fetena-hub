@@ -15,7 +15,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { handleApiRequest, prisma } from './apiHandler';
+import { handleApiRequest, prisma, runAutomatedHousekeeping } from './apiHandler';
 
 // This is the production entrypoint, so production mode is enforced rather than
 // merely defaulted. Note the ordering: ESM evaluates every import *before* this
@@ -60,10 +60,10 @@ const SECURITY_HEADERS: Record<string, string> = {
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
-  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
   'Content-Security-Policy':
-    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+    "default-src 'self'; img-src 'self' data: blob: https://lh3.googleusercontent.com https://*.googleusercontent.com; style-src 'self' 'unsafe-inline' https://accounts.google.com; font-src 'self' data:; script-src 'self' https://accounts.google.com/gsi/client; connect-src 'self' https://accounts.google.com/gsi/ https://oauth2.googleapis.com; frame-src https://accounts.google.com/gsi/; frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
 };
 
 function applySecurityHeaders(res: ServerResponse) {
@@ -183,7 +183,7 @@ server.keepAliveTimeout = 65_000;
 server.headersTimeout = 70_000;
 
 server.listen(port, host, () => {
-  console.log(`[server] ExamVault listening on http://${host}:${port} (NODE_ENV=${process.env.NODE_ENV})`);
+  console.log(`[server] Fetena Hub listening on http://${host}:${port} (NODE_ENV=${process.env.NODE_ENV})`);
   if (!fs.existsSync(distDir)) {
     console.warn('[server] WARNING: dist/ not found — run "npm run build" before starting.');
   }
@@ -194,7 +194,33 @@ server.listen(port, host, () => {
         '         (set ALLOW_ACTOR_IMPERSONATION="false" or NODE_ENV=production).'
     );
   }
+
+  // Run database housekeeping on boot to purge expired sessions & rate limits
+  runAutomatedHousekeeping()
+    .then((stats) => {
+      if (stats.expiredSessions > 0 || stats.expiredRateLimits > 0 || stats.expiredResetTokens > 0) {
+        console.log(
+          `[server] Startup housekeeping: pruned ${stats.expiredSessions} sessions, ${stats.expiredRateLimits} rate limits, ${stats.expiredResetTokens} reset tokens.`
+        );
+      }
+    })
+    .catch((err) => console.error('[server] Startup housekeeping error:', err));
 });
+
+// Periodic database maintenance every 6 hours
+const HOUSEKEEPING_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const housekeepingTimer = setInterval(() => {
+  runAutomatedHousekeeping()
+    .then((stats) => {
+      if (stats.expiredSessions > 0 || stats.expiredRateLimits > 0 || stats.expiredResetTokens > 0) {
+        console.log(
+          `[server] Periodic housekeeping: pruned ${stats.expiredSessions} sessions, ${stats.expiredRateLimits} rate limits, ${stats.expiredResetTokens} reset tokens.`
+        );
+      }
+    })
+    .catch((err) => console.error('[server] Periodic housekeeping error:', err));
+}, HOUSEKEEPING_INTERVAL_MS);
+housekeepingTimer.unref();
 
 let shuttingDown = false;
 async function shutdown(signal: string) {
