@@ -18,6 +18,9 @@ RUN npm install
 COPY prisma ./prisma/
 RUN npx prisma generate
 
+# Set build-time dummy secret so any static analysis or build-time script evaluations never fail
+ENV SESSION_SECRET="dummy-build-stage-secret-fetena-hub-32-chars-long"
+
 COPY . .
 RUN npm run build
 
