@@ -46,7 +46,21 @@ export function getSessionSecret(): string {
 // Validate eagerly so a misconfigured deployment never reaches a running server.
 getSessionSecret();
 
-export const prisma = new PrismaClient();
+if (!process.env.DATABASE_URL && process.env.NODE_ENV === 'production') {
+  console.error('[FATAL] DATABASE_URL is not defined in environment variables! Please add DATABASE_URL in Render dashboard.');
+}
+
+export const prisma = new PrismaClient(
+  process.env.DATABASE_URL
+    ? {
+        datasources: {
+          db: {
+            url: process.env.DATABASE_URL,
+          },
+        },
+      }
+    : undefined
+);
 
 function sha256(data: string | Buffer): string {
   return crypto.createHash('sha256').update(data).digest('hex');
