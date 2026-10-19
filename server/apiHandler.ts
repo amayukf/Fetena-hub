@@ -80,10 +80,14 @@ export function parseCookies(req: IncomingMessage): Record<string, string> {
 
 /**
  * Derives client IP safely.
- * Only trusts X-Forwarded-For if TRUST_PROXY is explicitly enabled.
+ * Automatically trusts X-Forwarded-For in production (e.g. Render, Cloudflare, Fly)
+ * or when TRUST_PROXY is explicitly enabled.
  */
 export function getClientIp(req: IncomingMessage): string {
-  const trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1';
+  const trustProxy =
+    process.env.TRUST_PROXY === 'true' ||
+    process.env.TRUST_PROXY === '1' ||
+    process.env.NODE_ENV === 'production';
   if (trustProxy) {
     const xff = req.headers['x-forwarded-for'];
     if (typeof xff === 'string' && xff.trim()) {
@@ -124,9 +128,9 @@ export async function checkRateLimit(
 
     return { allowed: true, remaining: Math.max(0, limit - updated.points), resetAt: record.expireAt };
   } catch (err) {
-    // SECURITY: Fail closed on database errors to prevent rate-limit bypass during DB degradation
-    console.error('[RateLimit DB Error]:', err);
-    return { allowed: false, remaining: 0, resetAt: expireAt };
+    // If DB has cold-start latency or transient error, log and fail open so users are not blocked
+    console.error('[RateLimit DB Warning - failing open]:', err instanceof Error ? err.message : err);
+    return { allowed: true, remaining: 1, resetAt: expireAt };
   }
 }
 
@@ -534,7 +538,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const user = await prisma.user.findFirst({
         where: {
           OR: [
-            { email: identifier.toLowerCase() },
+            { email: { equals: identifier, mode: 'insensitive' } },
             { studentId: identifier },
             { phone: identifier },
             ...phoneVariants.map(p => ({ phone: p })),
