@@ -606,13 +606,40 @@ function Auth({
 
   const handleGoogleSignIn = async () => {
     setError(null);
+    setGoogleLoading(true);
+
+    const clientId =
+      googleConfig?.clientId ||
+      (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
+      "325928787818-4duppp5nnkm5g6m9qgr32o36jc4g3bos.apps.googleusercontent.com";
+
+    const ensureGsiReady = async (): Promise<boolean> => {
+      const win = window as any;
+      if (win.google?.accounts?.id) return true;
+
+      return new Promise((resolve) => {
+        let script = document.getElementById("google-gsi-client") as HTMLScriptElement;
+        if (!script) {
+          script = document.createElement("script");
+          script.id = "google-gsi-client";
+          script.src = "https://accounts.google.com/gsi/client";
+          script.async = true;
+          script.defer = true;
+          document.head.appendChild(script);
+        }
+        script.addEventListener("load", () => resolve(true));
+        script.addEventListener("error", () => resolve(false));
+        setTimeout(() => resolve(Boolean((window as any).google?.accounts?.id)), 3000);
+      });
+    };
+
+    const isReady = await ensureGsiReady();
     const win = window as any;
 
-    if (googleConfig?.clientId && win.google?.accounts?.id) {
-      setGoogleLoading(true);
+    if (isReady && win.google?.accounts?.id && clientId) {
       try {
         win.google.accounts.id.initialize({
-          client_id: googleConfig.clientId,
+          client_id: clientId,
           callback: async (response: any) => {
             if (response.credential) {
               await processGoogleAuth({ credential: response.credential });
@@ -628,7 +655,13 @@ function Auth({
       return;
     }
 
-    setShowDemoPrompt(true);
+    setGoogleLoading(false);
+    const isProd = (import.meta as any).env?.PROD || process.env.NODE_ENV === "production";
+    if (!isProd) {
+      setShowDemoPrompt(true);
+    } else {
+      setError("Google Sign-In is initializing. Please click again or ensure popups are allowed.");
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -758,7 +791,7 @@ function Auth({
               <span>{googleLoading ? "Connecting with Google..." : signup ? "Create account with Google" : "Continue with Google"}</span>
             </button>
 
-            {showDemoPrompt && (
+            {showDemoPrompt && !((import.meta as any).env?.PROD || process.env.NODE_ENV === "production") && (
               <div className="google-demo-box">
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
                   <strong>💡 Google OAuth Quick Connect</strong>

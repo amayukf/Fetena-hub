@@ -639,7 +639,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // GET /api/auth/google/config - Google OAuth Client ID Configuration
     // -------------------------------------------------------------
     if (pathname === '/api/auth/google/config' && method === 'GET') {
-      const clientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || null;
+      const clientId =
+        process.env.GOOGLE_CLIENT_ID ||
+        process.env.VITE_GOOGLE_CLIENT_ID ||
+        '325928787818-4duppp5nnkm5g6m9qgr32o36jc4g3bos.apps.googleusercontent.com';
       return sendJson(res, 200, {
         clientId,
         enabled: Boolean(clientId),
