@@ -1,0 +1,11 @@
+{
+  "name": "fetenahub",
+  "main": "server/cloudflareWorker.js",
+  "compatibility_date": "2026-10-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  }
+}
