@@ -4,13 +4,30 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
 
 import siteConfiguration from './.figma/make/site.json'
-import { examVaultApiPlugin } from './server/vitePluginApi'
-
 
 // Vite config — https://vitejs.dev/config/
-export default defineConfig(({ mode }) => {
+export default defineConfig(async ({ command, mode }) => {
   // .figma/make/deploy-preview passes `--mode development` for cached-preview builds.
   const emitSourcemaps = mode === 'development'
+
+  const plugins: Plugin[] = [
+    react(),
+    tailwindcss(),
+    figmaSiteConfiguration(siteConfiguration),
+    figmaErrorOverlayReplay(),
+    figmaReactRefreshBoundaryFallback(),
+    figmaMakeKitPlugin({ storiesGlob: '/src/**/*.stories.{ts,tsx,js,jsx}' }),
+  ];
+
+  // Dev API middleware is only needed during local dev server execution (`vite dev`), never during static bundle build
+  if (command === 'serve') {
+    try {
+      const { examVaultApiPlugin } = await import('./server/vitePluginApi');
+      plugins.unshift(examVaultApiPlugin());
+    } catch (err) {
+      console.warn('[vite.config] Note: Dev API plugin skipped:', err);
+    }
+  }
 
   return {
     base: process.env.FIGMA_PUBLIC_URL ? `${process.env.FIGMA_PUBLIC_URL}/` : '/',
@@ -28,15 +45,7 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    plugins: [
-      examVaultApiPlugin(),
-react(),
-      tailwindcss(),
-      figmaSiteConfiguration(siteConfiguration),
-      figmaErrorOverlayReplay(),
-      figmaReactRefreshBoundaryFallback(),
-      figmaMakeKitPlugin({ storiesGlob: '/src/**/*.stories.{ts,tsx,js,jsx}' }),
-    ],
+    plugins,
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
