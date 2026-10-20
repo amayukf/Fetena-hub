@@ -66,7 +66,7 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
 // Request core
 // ---------------------------------------------------------------------------
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 60_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
 
 interface RequestOptions {
