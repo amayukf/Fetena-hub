@@ -951,14 +951,18 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 404, 'User not found.');
       }
 
-      // Non-admins must provide and verify their current password unless they are completing an initial forced password reset
+      // Non-admins must provide and verify their current password unless they are completing an initial forced password reset or signed up via Google
       if ((!isSuperAdmin || targetUserId === actor.id) && !user.mustChangePassword) {
         if (!body.oldPassword) {
-          return sendError(res, 400, 'Current password is required.');
-        }
-        const matches = await bcrypt.compare(body.oldPassword, user.passwordHash);
-        if (!matches) {
-          return sendError(res, 401, 'Current password is incorrect.');
+          if (!user.googleId) {
+            return sendError(res, 400, 'Current password is required.');
+          }
+          // Authenticated Google OAuth users without an existing manual password can set one directly
+        } else {
+          const matches = await bcrypt.compare(body.oldPassword, user.passwordHash);
+          if (!matches) {
+            return sendError(res, 401, 'Current password is incorrect.');
+          }
         }
       }
 
