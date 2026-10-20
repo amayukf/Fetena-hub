@@ -22,8 +22,11 @@ export default defineConfig(async ({ command, mode }) => {
   // Dev API middleware is only needed during local dev server execution (`vite dev`), never during static bundle build
   if (command === 'serve') {
     try {
-      const { examVaultApiPlugin } = await import('./server/vitePluginApi');
-      plugins.unshift(examVaultApiPlugin());
+      const devPluginModule = './server/vitePluginApi';
+      const mod = await import(/* @vite-ignore */ devPluginModule);
+      if (mod?.examVaultApiPlugin) {
+        plugins.unshift(mod.examVaultApiPlugin());
+      }
     } catch (err) {
       console.warn('[vite.config] Note: Dev API plugin skipped:', err);
     }
