@@ -525,7 +525,6 @@ function Landing({
         <button onClick={() => go("privacy")}>Privacy</button>
         <button onClick={() => go("terms")}>Terms</button>
         <button onClick={() => go("contact")}>Contact</button>
-        <button onClick={() => go("admin-login")} style={{ fontWeight: 600, color: "var(--primary)" }}>Staff Portal</button>
       </div>
       <small>© 2026 Fetena Hub · Ambo University</small>
     </footer>
@@ -894,15 +893,6 @@ function Auth({
                 {signup ? "Log in" : "Create an account"}
               </button>
             </p>
-            <div style={{ textAlign: "center", marginTop: "14px", paddingTop: "12px", borderTop: "1px solid var(--line)" }}>
-              <button
-                type="button"
-                style={{ background: "none", border: "none", color: "var(--primary)", fontSize: "0.85rem", cursor: "pointer", fontWeight: 600 }}
-                onClick={() => { setError(null); go("admin-login"); }}
-              >
-                🔐 Staff & Verifier Sign In →
-              </button>
-            </div>
           </>
         ) : (
           <div style={{ textAlign: "center", marginTop: "16px", paddingTop: "12px", borderTop: "1px solid var(--line)" }}>
