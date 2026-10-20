@@ -176,6 +176,28 @@ footer small { grid-column: span 2; color: var(--muted); border-top: 1px solid v
   opacity: 0.65;
   cursor: not-allowed;
 }
+.google-btn-wrapper {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+}
+.google-btn-mount {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.google-btn-mount > div {
+  width: 100% !important;
+  display: flex !important;
+  justify-content: center !important;
+}
+.google-btn-mount iframe {
+  margin: 0 auto !important;
+}
 .auth-separator {
   display: flex;
   align-items: center;
@@ -582,8 +604,9 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
 }
 
 @media (max-width: 560px) {
-  .marketing-nav { padding: 0 16px; height: 68px; }
-  .nav-cta .btn-ghost { display: none; }
+  .marketing-nav { padding: 0 14px; height: 68px; }
+  .nav-cta { gap: 6px; }
+  .nav-cta .btn { padding: 8px 12px; font-size: 0.86rem; }
   .hero { padding: 42px 18px 60px; min-height: auto; }
   .hero-copy .heading { font-size: 2.65rem; }
   .hero-actions { width: 100%; flex-direction: column; }
