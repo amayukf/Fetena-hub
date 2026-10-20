@@ -2559,6 +2559,7 @@ function Requests({
 }
 
 function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLogout: () => void; go: (s: Screen) => void }) {
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwdMsg, setPwdMsg] = useState<{ text: string; tone: "success" | "danger" } | null>(null);
@@ -2566,6 +2567,10 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentUser.googleId && !currentPassword) {
+      setPwdMsg({ text: "Current password is required.", tone: "danger" });
+      return;
+    }
     if (!newPassword || newPassword.length < 8) {
       setPwdMsg({ text: "New password must be at least 8 characters long.", tone: "danger" });
       return;
@@ -2578,8 +2583,9 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
     setPwdLoading(true);
     setPwdMsg(null);
     try {
-      await api.changePassword({ newPassword });
+      await api.changePassword({ oldPassword: currentPassword || undefined, newPassword });
       setPwdMsg({ text: "Password successfully updated!", tone: "success" });
+      setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
     } catch (err: any) {
@@ -2637,11 +2643,20 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
           )}
           <form onSubmit={handleChangePassword} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <Input
+              label={currentUser.googleId ? "Current password (optional if signed in with Google)" : "Current password"}
+              placeholder="Enter your current password"
+              type="password"
+              value={currentPassword}
+              onChange={e => setCurrentPassword(e.target.value)}
+              required={!currentUser.googleId}
+            />
+            <Input
               label="New password"
               placeholder="At least 8 characters"
               type="password"
               value={newPassword}
               onChange={e => setNewPassword(e.target.value)}
+              required
             />
             <Input
               label="Confirm new password"
@@ -2649,6 +2664,7 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
               type="password"
               value={confirmPassword}
               onChange={e => setConfirmPassword(e.target.value)}
+              required
             />
             <Button type="submit" disabled={pwdLoading}>
               {pwdLoading ? "Saving..." : "Update Password"}
