@@ -1,0 +1,4 @@
+# Cloudflare Pages Proxy & SPA Routing Rules
+/api/*  https://fetena-hub.onrender.com/api/:splat  200
+/health https://fetena-hub.onrender.com/health      200
+/*      /index.html                                 200
