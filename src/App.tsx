@@ -550,9 +550,11 @@ function Auth({
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [googleConfig, setGoogleConfig] = useState<{ clientId: string | null; enabled: boolean } | null>(null);
+  const [gsiLoaded, setGsiLoaded] = useState(false);
   const [showDemoPrompt, setShowDemoPrompt] = useState(false);
   const [demoEmail, setDemoEmail] = useState("student.demo@ambo.edu.et");
   const [demoName, setDemoName] = useState("Abebe Bikila");
+  const googleBtnRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!admin) {
@@ -603,6 +605,78 @@ function Auth({
     }
   };
 
+  useEffect(() => {
+    if (admin) return;
+
+    let mounted = true;
+    let timer: any = null;
+
+    const clientId =
+      googleConfig?.clientId ||
+      (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
+      "325928787818-4duppp5nnkm5g6m9qgr32o36jc4g3bos.apps.googleusercontent.com";
+
+    const initAndRender = () => {
+      const win = window as any;
+      if (!win.google?.accounts?.id || !googleBtnRef.current || !clientId) return false;
+
+      try {
+        win.google.accounts.id.initialize({
+          client_id: clientId,
+          callback: async (response: any) => {
+            if (response.credential) {
+              await processGoogleAuth({ credential: response.credential });
+            }
+          },
+          auto_select: false,
+          cancel_on_tap_outside: true,
+        });
+
+        if (googleBtnRef.current) {
+          googleBtnRef.current.innerHTML = "";
+          const availableWidth = googleBtnRef.current.parentElement?.clientWidth || 320;
+          const btnWidth = Math.min(400, Math.max(200, Math.floor(availableWidth)));
+
+          win.google.accounts.id.renderButton(googleBtnRef.current, {
+            type: "standard",
+            theme: "outline",
+            size: "large",
+            text: signup ? "signup_with" : "continue_with",
+            shape: "rectangular",
+            logo_alignment: "left",
+            width: btnWidth,
+          });
+
+          // Also trigger One Tap on desktop browsers where allowed
+          win.google.accounts.id.prompt((notification: any) => {
+            if (notification?.isNotDisplayed?.()) {
+              console.debug("One Tap not displayed:", notification.getNotDisplayedReason?.());
+            }
+          });
+
+          if (mounted) setGsiLoaded(true);
+        }
+        return true;
+      } catch (err) {
+        console.warn("[GSI] renderButton error:", err);
+        return false;
+      }
+    };
+
+    if (!initAndRender()) {
+      timer = setInterval(() => {
+        if (initAndRender()) {
+          clearInterval(timer);
+        }
+      }, 250);
+    }
+
+    return () => {
+      mounted = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [admin, googleConfig, signup, stream]);
+
   const handleGoogleSignIn = async () => {
     setError(null);
     setGoogleLoading(true);
@@ -612,30 +686,8 @@ function Auth({
       (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
       "325928787818-4duppp5nnkm5g6m9qgr32o36jc4g3bos.apps.googleusercontent.com";
 
-    const ensureGsiReady = async (): Promise<boolean> => {
-      const win = window as any;
-      if (win.google?.accounts?.id) return true;
-
-      return new Promise((resolve) => {
-        let script = document.getElementById("google-gsi-client") as HTMLScriptElement;
-        if (!script) {
-          script = document.createElement("script");
-          script.id = "google-gsi-client";
-          script.src = "https://accounts.google.com/gsi/client";
-          script.async = true;
-          script.defer = true;
-          document.head.appendChild(script);
-        }
-        script.addEventListener("load", () => resolve(true));
-        script.addEventListener("error", () => resolve(false));
-        setTimeout(() => resolve(Boolean((window as any).google?.accounts?.id)), 3000);
-      });
-    };
-
-    const isReady = await ensureGsiReady();
     const win = window as any;
-
-    if (isReady && win.google?.accounts?.id && clientId) {
+    if (win.google?.accounts?.id && clientId) {
       try {
         win.google.accounts.id.initialize({
           client_id: clientId,
@@ -659,7 +711,7 @@ function Auth({
     if (!isProd) {
       setShowDemoPrompt(true);
     } else {
-      setError("Google Sign-In is initializing. Please click again or ensure popups are allowed.");
+      setError("Google Sign-In is initializing. Please tap the button again in a moment.");
     }
   };
 
@@ -775,20 +827,30 @@ function Auth({
                 </Select>
               </div>
             )}
-            <button
-              type="button"
-              className="google-btn"
-              onClick={handleGoogleSignIn}
-              disabled={loading || googleLoading}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-              </svg>
-              <span>{googleLoading ? "Connecting with Google..." : signup ? "Create account with Google" : "Continue with Google"}</span>
-            </button>
+            <div className="google-btn-wrapper">
+              <div
+                ref={googleBtnRef}
+                className="google-btn-mount"
+                style={{ display: gsiLoaded && !googleLoading ? "flex" : "none" }}
+              />
+
+              {(!gsiLoaded || googleLoading) && (
+                <button
+                  type="button"
+                  className="google-btn"
+                  onClick={handleGoogleSignIn}
+                  disabled={loading || googleLoading}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                  </svg>
+                  <span>{googleLoading ? "Connecting with Google..." : signup ? "Create account with Google" : "Continue with Google"}</span>
+                </button>
+              )}
+            </div>
 
             {showDemoPrompt && !((import.meta as any).env?.PROD || process.env.NODE_ENV === "production") && (
               <div className="google-demo-box">
