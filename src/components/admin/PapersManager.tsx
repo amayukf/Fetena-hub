@@ -75,8 +75,23 @@ export default function PapersManager({
   const [replaceFile, setReplaceFile] = useState<File | null>(null);
   const [replacing, setReplacing] = useState(false);
 
+  // Upload Solution State
+  const [uploadHasSolution, setUploadHasSolution] = useState(false);
+  const [uploadSolutionText, setUploadSolutionText] = useState('');
+  const [uploadSolutionFile, setUploadSolutionFile] = useState<File | null>(null);
+  const [uploadSolutionMode, setUploadSolutionMode] = useState<'text' | 'file'>('text');
+
+  // Solution Manager Modal State (for existing papers)
+  const [managingSolutionPaper, setManagingSolutionPaper] = useState<StoreExamPaper | null>(null);
+  const [editingSolutionText, setEditingSolutionText] = useState('');
+  const [editingSolutionFile, setEditingSolutionFile] = useState<File | null>(null);
+  const [editingSolutionMode, setEditingSolutionMode] = useState<'text' | 'file'>('text');
+  const [savingSolution, setSavingSolution] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
+  const solutionInputRef = useRef<HTMLInputElement>(null);
+  const editSolutionInputRef = useRef<HTMLInputElement>(null);
 
   // Handle files selected for upload
   const handleFilesSelected = async (files: FileList | null) => {
@@ -132,7 +147,7 @@ export default function PapersManager({
             ? uploadCustomTitle.trim()
             : `${selectedCourse.code} · ${uploadExamType} Exam ${uploadYear} E.C.`;
 
-        await api.createPaper(
+        const createdPaper = await api.createPaper(
           {
             courseId: uploadCourseId,
             title,
@@ -152,6 +167,36 @@ export default function PapersManager({
           currentUser.userId,
           currentUser.role
         );
+
+        // Attach solution if provided
+        if (createdPaper && createdPaper.id && uploadHasSolution && (uploadSolutionText.trim() || uploadSolutionFile)) {
+          let solutionStorageKey: string | undefined;
+          let solutionPageCount = 1;
+          let solutionFileName: string | undefined;
+          if (uploadSolutionFile) {
+            const solDataUrl = await fileToDataUrl(uploadSolutionFile);
+            const solParts = solDataUrl.split(',');
+            const solBase64 = solParts[1] || solParts[0];
+            const solMime = uploadSolutionFile.type || 'application/pdf';
+            const solRes = await api.uploadFile(solBase64, solMime, 'paper');
+            solutionStorageKey = solRes.storageKey;
+            solutionPageCount = (solRes as any).pageCount || 1;
+            solutionFileName = uploadSolutionFile.name;
+          }
+          await api.updatePaperSolution(
+            createdPaper.id,
+            {
+              hasSolution: true,
+              solutionText: uploadSolutionText.trim(),
+              solutionStorageKey,
+              solutionPageCount,
+              solutionFileName,
+              solutionVerified: true,
+            },
+            currentUser.userId,
+            currentUser.role
+          );
+        }
       }
 
       alert(`Successfully uploaded ${uploadFiles.length} paper(s) to the library.`);
@@ -159,6 +204,9 @@ export default function PapersManager({
       setUploadFiles([]);
       setDuplicateMatch(null);
       setUploadCustomTitle('');
+      setUploadHasSolution(false);
+      setUploadSolutionText('');
+      setUploadSolutionFile(null);
       onRefresh();
     } catch (err: any) {
       if (err.details?.code === 'DUPLICATE_FILE') {
@@ -171,6 +219,82 @@ export default function PapersManager({
       }
     } finally {
       setUploading(false);
+    }
+  };
+
+  // Save solution for existing paper
+  const handleSaveSolution = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!managingSolutionPaper) return;
+
+    if (!editingSolutionText.trim() && !editingSolutionFile && !managingSolutionPaper.solutionStorageKey) {
+      alert('Please enter answer explanations or upload a solution document.');
+      return;
+    }
+
+    setSavingSolution(true);
+    try {
+      let solutionStorageKey = managingSolutionPaper.solutionStorageKey;
+      let solutionPageCount = managingSolutionPaper.solutionPageCount || 1;
+      let solutionFileName = managingSolutionPaper.solutionFileName;
+
+      if (editingSolutionFile) {
+        const solDataUrl = await fileToDataUrl(editingSolutionFile);
+        const solParts = solDataUrl.split(',');
+        const solBase64 = solParts[1] || solParts[0];
+        const solMime = editingSolutionFile.type || 'application/pdf';
+        const solRes = await api.uploadFile(solBase64, solMime, 'paper');
+        solutionStorageKey = solRes.storageKey;
+        solutionPageCount = (solRes as any).pageCount || 1;
+        solutionFileName = editingSolutionFile.name;
+      }
+
+      await api.updatePaperSolution(
+        managingSolutionPaper.id,
+        {
+          hasSolution: true,
+          solutionText: editingSolutionText.trim(),
+          solutionStorageKey,
+          solutionPageCount,
+          solutionFileName,
+          solutionVerified: true,
+        },
+        currentUser.userId,
+        currentUser.role
+      );
+
+      alert(`Solution key successfully saved and published for ${managingSolutionPaper.title}!`);
+      setManagingSolutionPaper(null);
+      setEditingSolutionText('');
+      setEditingSolutionFile(null);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Failed to save solution');
+    } finally {
+      setSavingSolution(false);
+    }
+  };
+
+  // Remove solution
+  const handleRemoveSolution = async () => {
+    if (!managingSolutionPaper) return;
+    if (!confirm(`Are you sure you want to remove the solution key for "${managingSolutionPaper.title}"?`)) return;
+
+    setSavingSolution(true);
+    try {
+      await api.updatePaperSolution(
+        managingSolutionPaper.id,
+        { remove: true },
+        currentUser.userId,
+        currentUser.role
+      );
+      alert('Solution removed.');
+      setManagingSolutionPaper(null);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Failed to remove solution');
+    } finally {
+      setSavingSolution(false);
     }
   };
 
@@ -415,8 +539,15 @@ export default function PapersManager({
                     <td>
                       <div>
                         <strong style={{ color: 'var(--ink)' }}>{p.title}</strong>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '2px' }}>
-                          {p.pageCount || "—"} pages · {p.viewsCount || 0} views
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '3px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                            {p.pageCount || "—"} pages · {p.viewsCount || 0} views
+                          </span>
+                          {p.hasSolution && (
+                            <span style={{ fontSize: '0.72rem', background: '#dcfce7', color: '#166534', padding: '1px 6px', borderRadius: '4px', fontWeight: 650 }}>
+                              💡 Solutions Attached
+                            </span>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -475,6 +606,19 @@ export default function PapersManager({
                           <>
                             {!isVerifier && (
                               <>
+                                <Button
+                                  variant="secondary"
+                                  style={{ minHeight: '32px', padding: '0 8px', fontSize: '0.78rem' }}
+                                  onClick={() => {
+                                    setManagingSolutionPaper(p);
+                                    setEditingSolutionText(p.solutionText || '');
+                                    setEditingSolutionFile(null);
+                                    setEditingSolutionMode(p.solutionStorageKey ? 'file' : 'text');
+                                  }}
+                                  title="Attach or edit verified exam answers / solutions"
+                                >
+                                  {p.hasSolution ? '💡 Solution' : '+ Solution'}
+                                </Button>
                                 <Button
                                   variant="secondary"
                                   style={{ minHeight: '32px', padding: '0 8px', fontSize: '0.78rem' }}
@@ -684,6 +828,94 @@ export default function PapersManager({
                   <span />
                 </label>
               </div>
+
+              {/* Attach Answer Key / Solutions Accordion */}
+              <div style={{ marginTop: '16px', border: '1px solid var(--line)', borderRadius: '10px', padding: '14px', background: uploadHasSolution ? '#f0fdf4' : '#fafafa' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Icon name="help" size={20} />
+                    <div>
+                      <strong style={{ fontSize: '0.9rem' }}>Attach Verified Answer Key / Solutions</strong>
+                      <p style={{ fontSize: '0.78rem', color: 'var(--muted)', margin: 0 }}>Provide student solutions with instant zero-load viewer toggling</p>
+                    </div>
+                  </div>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={uploadHasSolution}
+                      onChange={e => setUploadHasSolution(e.target.checked)}
+                    />
+                    <span />
+                  </label>
+                </div>
+
+                {uploadHasSolution && (
+                  <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className={`admin-tab-btn ${uploadSolutionMode === 'text' ? 'active' : ''}`}
+                        onClick={() => setUploadSolutionMode('text')}
+                        style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                      >
+                        ✍️ Answer Text / Explanations
+                      </button>
+                      <button
+                        type="button"
+                        className={`admin-tab-btn ${uploadSolutionMode === 'file' ? 'active' : ''}`}
+                        onClick={() => setUploadSolutionMode('file')}
+                        style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                      >
+                        📄 Attach Solution PDF/Image
+                      </button>
+                    </div>
+
+                    {uploadSolutionMode === 'text' ? (
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                          <small style={{ color: 'var(--muted)', fontWeight: 600 }}>Answers and Explanations</small>
+                          <button
+                            type="button"
+                            onClick={() => setUploadSolutionText(prev => (prev ? prev + '\n' : '') + 'PART I: Multiple Choice\n1. A — Verified explanation...\n2. B — Verified explanation...\n3. C — Verified explanation...\n\nPART II: Workout Problems\n1. Given data...')}
+                            style={{ fontSize: '0.72rem', background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', textDecoration: 'underline' }}
+                          >
+                            + Insert Question Template
+                          </button>
+                        </div>
+                        <textarea
+                          rows={4}
+                          value={uploadSolutionText}
+                          onChange={e => setUploadSolutionText(e.target.value)}
+                          placeholder="e.g.&#10;1. B — Verified explanation...&#10;2. D — According to theorem 2.4...&#10;3. A..."
+                          style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--line)', fontFamily: 'monospace', fontSize: '0.85rem' }}
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        className="drop-zone"
+                        style={{ padding: '16px', background: 'white' }}
+                        onClick={() => solutionInputRef.current?.click()}
+                      >
+                        <input
+                          ref={solutionInputRef}
+                          type="file"
+                          accept=".pdf,image/png,image/jpeg"
+                          style={{ display: 'none' }}
+                          onChange={e => {
+                            if (e.target.files && e.target.files[0]) {
+                              setUploadSolutionFile(e.target.files[0]);
+                            }
+                          }}
+                        />
+                        <Icon name="upload" size={24} />
+                        <strong style={{ fontSize: '0.85rem' }}>
+                          {uploadSolutionFile ? uploadSolutionFile.name : 'Click to select solution PDF or sheet image'}
+                        </strong>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="modal-footer">
@@ -750,6 +982,150 @@ export default function PapersManager({
                 <Button type="submit" disabled={!replaceFile || replacing}>
                   {replacing ? 'Uploading...' : 'Confirm Replacement'}
                 </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Attach / Edit Solution Modal */}
+      {managingSolutionPaper && (
+        <div className="modal-backdrop" onClick={() => !savingSolution && setManagingSolutionPaper(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">VERIFIED ANSWERS & EXPLANATIONS</span>
+                <Heading level={2}>
+                  {managingSolutionPaper.hasSolution ? 'Edit Solution Key' : 'Attach Solution Key'}
+                </Heading>
+              </div>
+              <Button variant="ghost" onClick={() => setManagingSolutionPaper(null)}>
+                <Icon name="close" />
+              </Button>
+            </div>
+
+            <form onSubmit={handleSaveSolution}>
+              <div className="modal-body">
+                <div style={{ background: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--line)', marginBottom: '14px' }}>
+                  <strong style={{ color: 'var(--ink)' }}>{managingSolutionPaper.title}</strong>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginTop: '2px' }}>
+                    {managingSolutionPaper.courseCode} · {managingSolutionPaper.examType} Exam ({managingSolutionPaper.examYearEc || managingSolutionPaper.academicYear} E.C.)
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                  <button
+                    type="button"
+                    className={`admin-tab-btn ${editingSolutionMode === 'text' ? 'active' : ''}`}
+                    onClick={() => setEditingSolutionMode('text')}
+                  >
+                    ✍️ Question-by-Question Key & Explanations
+                  </button>
+                  <button
+                    type="button"
+                    className={`admin-tab-btn ${editingSolutionMode === 'file' ? 'active' : ''}`}
+                    onClick={() => setEditingSolutionMode('file')}
+                  >
+                    📄 Attach Solution PDF / Image
+                  </button>
+                </div>
+
+                {editingSolutionMode === 'text' ? (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>Verified Answers & Step-by-Step Explanations:</span>
+                      <button
+                        type="button"
+                        onClick={() => setEditingSolutionText(prev => (prev ? prev + '\n' : '') + 'PART I: Multiple Choice Questions\n1. B — Verified explanation...\n2. D — According to the formula...\n3. A — Option A is correct because...\n\nPART II: Workout Problems\nProblem 1 Solution:\nGiven: ...\nStep 1: ...\nAnswer: ...')}
+                        style={{ fontSize: '0.74rem', background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', textDecoration: 'underline' }}
+                      >
+                        + Insert Template
+                      </button>
+                    </div>
+                    <textarea
+                      rows={10}
+                      value={editingSolutionText}
+                      onChange={e => setEditingSolutionText(e.target.value)}
+                      placeholder="Type or paste question answers here:&#10;&#10;1. C — Solution reasoning...&#10;2. A — Explanation...&#10;3. B..."
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--line)',
+                        fontFamily: 'monospace',
+                        fontSize: '0.86rem',
+                        lineHeight: '1.5',
+                        background: '#ffffff',
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <div
+                      className="drop-zone"
+                      onClick={() => editSolutionInputRef.current?.click()}
+                      style={{ padding: '24px 16px' }}
+                    >
+                      <input
+                        ref={editSolutionInputRef}
+                        type="file"
+                        accept=".pdf,image/png,image/jpeg"
+                        style={{ display: 'none' }}
+                        onChange={e => {
+                          if (e.target.files && e.target.files[0]) {
+                            setEditingSolutionFile(e.target.files[0]);
+                          }
+                        }}
+                      />
+                      <Icon name="upload" size={28} />
+                      <strong style={{ fontSize: '0.9rem' }}>
+                        {editingSolutionFile
+                          ? editingSolutionFile.name
+                          : managingSolutionPaper.solutionStorageKey
+                          ? `Currently attached: ${managingSolutionPaper.solutionFileName || 'Solution Document'}`
+                          : 'Click to select solution PDF or image file'}
+                      </strong>
+                      <small style={{ color: 'var(--muted)' }}>
+                        Uploaded to private secure storage and protected with entitlement check.
+                      </small>
+                    </div>
+
+                    <div style={{ marginTop: '12px' }}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>Optional Summary or Note for Students:</span>
+                      <textarea
+                        rows={3}
+                        value={editingSolutionText}
+                        onChange={e => setEditingSolutionText(e.target.value)}
+                        placeholder="Add instructor notes, tips, or grade distribution summary..."
+                        style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid var(--line)', marginTop: '4px' }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
+                <div>
+                  {managingSolutionPaper.hasSolution && (
+                    <Button
+                      type="button"
+                      variant="danger"
+                      onClick={handleRemoveSolution}
+                      disabled={savingSolution}
+                      style={{ minHeight: '34px', padding: '0 12px' }}
+                    >
+                      Remove Solution
+                    </Button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <Button variant="secondary" onClick={() => setManagingSolutionPaper(null)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={savingSolution}>
+                    {savingSolution ? 'Saving Solution...' : 'Save & Publish Solution'}
+                  </Button>
+                </div>
               </div>
             </form>
           </div>

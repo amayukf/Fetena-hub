@@ -552,9 +552,6 @@ function Auth({
   const [googleLoading, setGoogleLoading] = useState(false);
   const [googleConfig, setGoogleConfig] = useState<{ clientId: string | null; enabled: boolean } | null>(null);
   const [gsiLoaded, setGsiLoaded] = useState(false);
-  const [showDemoPrompt, setShowDemoPrompt] = useState(false);
-  const [demoEmail, setDemoEmail] = useState("student.demo@ambo.edu.et");
-  const [demoName, setDemoName] = useState("Abebe Bikila");
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -708,12 +705,7 @@ function Auth({
     }
 
     setGoogleLoading(false);
-    const isProd = (import.meta as any).env?.PROD || process.env.NODE_ENV === "production";
-    if (!isProd) {
-      setShowDemoPrompt(true);
-    } else {
-      setError("Google Sign-In is initializing. Please tap the button again in a moment.");
-    }
+    setError("Google Sign-In is initializing. Please tap the button again in a moment.");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -852,50 +844,6 @@ function Auth({
                 </button>
               )}
             </div>
-
-            {showDemoPrompt && !((import.meta as any).env?.PROD || process.env.NODE_ENV === "production") && (
-              <div className="google-demo-box">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
-                  <strong>💡 Google OAuth Quick Connect</strong>
-                  <button
-                    type="button"
-                    onClick={() => setShowDemoPrompt(false)}
-                    style={{ border: "none", background: "none", cursor: "pointer", fontSize: "1.1rem", color: "#166534" }}
-                  >
-                    ×
-                  </button>
-                </div>
-                <p style={{ margin: "0 0 10px 0", lineHeight: "1.4" }}>
-                  Google OAuth Client ID can be set in <code>.env</code> for production. You can test one-click sign in below:
-                </p>
-                <div style={{ background: "white", padding: "10px", borderRadius: "6px", border: "1px solid #bbf7d0", marginBottom: "10px" }}>
-                  <label style={{ display: "block", fontSize: "0.75rem", fontWeight: "bold", marginBottom: "4px", color: "#374151" }}>Full Name:</label>
-                  <input
-                    type="text"
-                    value={demoName}
-                    onChange={e => setDemoName(e.target.value)}
-                    placeholder="Full Name"
-                    style={{ width: "100%", padding: "6px 8px", fontSize: "0.85rem", marginBottom: "8px", border: "1px solid #d1d5db", borderRadius: "4px" }}
-                  />
-                  <label style={{ display: "block", fontSize: "0.75rem", fontWeight: "bold", marginBottom: "4px", color: "#374151" }}>Google Email:</label>
-                  <input
-                    type="email"
-                    value={demoEmail}
-                    onChange={e => setDemoEmail(e.target.value)}
-                    placeholder="student@gmail.com"
-                    style={{ width: "100%", padding: "6px 8px", fontSize: "0.85rem", border: "1px solid #d1d5db", borderRadius: "4px" }}
-                  />
-                </div>
-                <button
-                  type="button"
-                  className="btn primary full"
-                  style={{ padding: "8px 12px", fontSize: "0.85rem", cursor: "pointer" }}
-                  onClick={() => processGoogleAuth({ devProfile: { email: demoEmail, name: demoName } })}
-                >
-                  Confirm & Continue as {demoName.split(" ")[0] || "Student"} →
-                </button>
-              </div>
-            )}
 
             <div className="auth-separator">
               <span>OR {signup ? "SIGN UP WITH" : "SIGN IN WITH"} PASSWORD</span>
@@ -1432,88 +1380,265 @@ function Course({
   papers: StoreExamPaper[];
   onSelectPaper: (p: StoreExamPaper) => void;
 }) {
-  const coursePapers = papers.filter(
-    (p) =>
-      p.courseId === course.id ||
-      (p.courseCode && p.courseCode.trim().toLowerCase() === course.code.trim().toLowerCase())
-  );
+  const [searchQuery, setSearchQuery] = useState('');
+  const [examTypeFilter, setExamTypeFilter] = useState<'ALL' | 'MID' | 'FINAL' | 'QUIZ'>('ALL');
+  const [yearFilter, setYearFilter] = useState<string>('ALL');
+  const [solutionOnly, setSolutionOnly] = useState<boolean>(false);
 
-  return <>
-    <button className="back-link page-back" onClick={() => go("semester")}>← Back to semester courses</button>
-    <PageHead
-      eyebrow={`${course.code} · ${course.creditHours} CREDIT HOURS`}
-      title={course.title}
-      text={course.isShared ? "Shared course taken by both Natural Science and Social Science students." : "Freshman stream course · Ambo University."}
-      action={course.isShared ? <Badge tone="accent">SHARED COURSE</Badge> : undefined}
-    />
-    <div className="filter-row">
-      <div>
-        <Button variant="secondary" icon="filter">All types</Button>
-        <Button variant="secondary">2015 E.C.</Button>
+  const coursePapers = useMemo(() => {
+    return papers.filter(
+      (p) =>
+        p.courseId === course.id ||
+        (p.courseCode && p.courseCode.trim().toLowerCase() === course.code.trim().toLowerCase())
+    );
+  }, [papers, course.id, course.code]);
+
+  const availableYears = useMemo(() => {
+    const set = new Set<string>();
+    coursePapers.forEach((p) => {
+      const yr = p.examYearEc || p.academicYear;
+      if (yr) set.add(String(yr));
+    });
+    return Array.from(set).sort((a, b) => Number(b) - Number(a));
+  }, [coursePapers]);
+
+  const filteredPapers = useMemo(() => {
+    return coursePapers.filter((p) => {
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchTitle = p.title.toLowerCase().includes(q);
+        const matchCode = (p.courseCode || '').toLowerCase().includes(q);
+        const matchType = p.examType.toLowerCase().includes(q);
+        const matchYear = String(p.examYearEc || p.academicYear || '').includes(q);
+        if (!matchTitle && !matchCode && !matchType && !matchYear) return false;
+      }
+      if (examTypeFilter !== 'ALL' && p.examType !== examTypeFilter) return false;
+      if (yearFilter !== 'ALL' && String(p.examYearEc || p.academicYear) !== yearFilter) return false;
+      if (solutionOnly && !p.hasSolution) return false;
+      return true;
+    });
+  }, [coursePapers, searchQuery, examTypeFilter, yearFilter, solutionOnly]);
+
+  const hasActiveFilters = searchQuery.trim() !== '' || examTypeFilter !== 'ALL' || yearFilter !== 'ALL' || solutionOnly;
+  const solutionsCount = coursePapers.filter((p) => p.hasSolution).length;
+
+  return (
+    <>
+      <button className="back-link page-back" onClick={() => go("semester")}>
+        ← Back to semester courses
+      </button>
+
+      <PageHead
+        eyebrow={`${course.code} · ${course.creditHours} CREDIT HOURS`}
+        title={course.title}
+        text={course.isShared ? "Shared course taken by both Natural Science and Social Science students." : "Freshman stream course · Ambo University."}
+        action={course.isShared ? <Badge tone="accent">SHARED COURSE</Badge> : undefined}
+      />
+
+      {/* Live Search and Semester Status Row */}
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', margin: '14px 0 10px', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 240px', position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <span style={{ position: 'absolute', left: '12px', color: 'var(--muted)', pointerEvents: 'none', display: 'flex', alignItems: 'center' }}>
+            <Icon name="search" size={16} />
+          </span>
+          <input
+            type="text"
+            placeholder={`Search ${course.code} papers by year, midterm, final, keywords...`}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '10px 34px 10px 36px',
+              borderRadius: '10px',
+              border: '1px solid var(--line)',
+              background: '#ffffff',
+              fontSize: '0.88rem',
+            }}
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              style={{
+                position: 'absolute',
+                right: '10px',
+                background: 'none',
+                border: 'none',
+                color: 'var(--muted)',
+                cursor: 'pointer',
+                fontSize: '1.1rem',
+                lineHeight: 1,
+              }}
+              title="Clear search"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <Badge tone={isUnlocked ? "success" : "warning"}>
+          {isUnlocked ? "SEMESTER UNLOCKED" : "50 ETB TO UNLOCK ALL"}
+        </Badge>
       </div>
-      <Badge tone={isUnlocked ? "success" : "warning"}>
-        {isUnlocked ? "SEMESTER UNLOCKED" : "50 ETB TO UNLOCK ALL"}
-      </Badge>
-    </div>
 
-    {coursePapers.length === 0 ? (
-      <Card style={{ textAlign: "center", padding: "48px 24px", margin: "24px 0" }}>
-        <Icon name="file" size={40}/>
-        <Heading level={2}>No exam papers uploaded yet</Heading>
-        <p style={{ color: "var(--muted)", maxWidth: "460px", margin: "8px auto 20px" }}>
-          We don't have digitized papers for {course.code} yet. Do you have a copy of a mid or final exam? Sell it to Fetena Hub for cash!
-        </p>
-        <Button onClick={() => go("requests")} icon="upload">
-          Sell this paper to Admin
-        </Button>
-      </Card>
-    ) : (
-      <div className="paper-grid">
-        {coursePapers.map((p, i) => {
-          const canOpen = isUnlocked || p.isFreeSample;
-          return (
-            <Card className="paper-card" key={p.id}>
-              <div className="paper-top">
-                <span className="large-file"><Icon name="file" size={28}/><small>PDF</small></span>
-                <Badge tone={p.isFreeSample ? "accent" : p.quality === "EXCELLENT" ? "success" : "neutral"}>
-                  {p.isFreeSample ? "Free Sample" : `${p.quality} scan`}
-                </Badge>
-              </div>
-              <small>{p.examType} · {p.examYearEc ? `${p.examYearEc} E.C.` : `${p.academicYear}`}</small>
-              <Heading level={3}>{p.title}</Heading>
-              <p>{p.pageCount} pages · Verified scan</p>
-              {canOpen ? (
-                <Button
-                  onClick={() => {
-                    onSelectPaper(p);
-                    go("viewer");
-                  }}
-                  variant={i === 0 ? "primary" : "secondary"}
-                  className="full"
-                >
-                  <Icon name="eye"/> {p.isFreeSample ? "Open free sample" : "Open paper"}
-                </Button>
-              ) : (
-                <div className="locked-action" style={{ cursor: "pointer" }} onClick={() => go("checkout")}>
-                  <Icon name="lock"/>
-                  <span>Unlock semester (50 ETB)</span>
+      {/* Interactive Filter Chips Row */}
+      {coursePapers.length > 0 && (
+        <div className="filter-chips-row">
+          <button
+            type="button"
+            className={`filter-chip ${examTypeFilter === 'ALL' && yearFilter === 'ALL' && !solutionOnly ? 'active' : ''}`}
+            onClick={() => { setExamTypeFilter('ALL'); setYearFilter('ALL'); setSolutionOnly(false); }}
+          >
+            All Papers ({coursePapers.length})
+          </button>
+
+          <button
+            type="button"
+            className={`filter-chip ${examTypeFilter === 'FINAL' ? 'active' : ''}`}
+            onClick={() => setExamTypeFilter((prev) => (prev === 'FINAL' ? 'ALL' : 'FINAL'))}
+          >
+            Final Exams
+          </button>
+
+          <button
+            type="button"
+            className={`filter-chip ${examTypeFilter === 'MID' ? 'active' : ''}`}
+            onClick={() => setExamTypeFilter((prev) => (prev === 'MID' ? 'ALL' : 'MID'))}
+          >
+            Midterms
+          </button>
+
+          {solutionsCount > 0 && (
+            <button
+              type="button"
+              className={`filter-chip solution-chip ${solutionOnly ? 'active' : ''}`}
+              onClick={() => setSolutionOnly((prev) => !prev)}
+            >
+              💡 With Solutions ({solutionsCount})
+            </button>
+          )}
+
+          {availableYears.map((yr) => (
+            <button
+              key={yr}
+              type="button"
+              className={`filter-chip ${yearFilter === yr ? 'active' : ''}`}
+              onClick={() => setYearFilter((prev) => (prev === yr ? 'ALL' : yr))}
+            >
+              {yr} E.C.
+            </button>
+          ))}
+
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={() => {
+                setExamTypeFilter('ALL');
+                setYearFilter('ALL');
+                setSolutionOnly(false);
+                setSearchQuery('');
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--danger)',
+                fontSize: '0.8rem',
+                cursor: 'pointer',
+                padding: '4px 8px',
+                textDecoration: 'underline',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Reset filters
+            </button>
+          )}
+        </div>
+      )}
+
+      {coursePapers.length === 0 ? (
+        <Card style={{ textAlign: "center", padding: "48px 24px", margin: "24px 0" }}>
+          <Icon name="file" size={40}/>
+          <Heading level={2}>No exam papers uploaded yet</Heading>
+          <p style={{ color: "var(--muted)", maxWidth: "460px", margin: "8px auto 20px" }}>
+            We don't have digitized papers for {course.code} yet. Do you have a copy of a mid or final exam? Sell it to Fetena Hub for cash!
+          </p>
+          <Button onClick={() => go("requests")} icon="upload">
+            Sell this paper to Admin
+          </Button>
+        </Card>
+      ) : filteredPapers.length === 0 ? (
+        <Card style={{ textAlign: "center", padding: "40px 20px", margin: "20px 0" }}>
+          <Icon name="help" size={36}/>
+          <Heading level={3} style={{ marginTop: '10px' }}>No papers match your filters</Heading>
+          <p style={{ color: "var(--muted)", maxWidth: "420px", margin: "8px auto 16px" }}>
+            We could not find any exam papers matching "{searchQuery || `${examTypeFilter} ${yearFilter}`}". Try clearing filters or search terms.
+          </p>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setExamTypeFilter('ALL');
+              setYearFilter('ALL');
+              setSolutionOnly(false);
+              setSearchQuery('');
+            }}
+          >
+            Clear all filters
+          </Button>
+        </Card>
+      ) : (
+        <div className="paper-grid">
+          {filteredPapers.map((p, i) => {
+            const canOpen = isUnlocked || p.isFreeSample;
+            return (
+              <Card className="paper-card" key={p.id}>
+                <div className="paper-top">
+                  <span className="large-file"><Icon name="file" size={28}/><small>PDF</small></span>
+                  <Badge tone={p.isFreeSample ? "accent" : p.quality === "EXCELLENT" ? "success" : "neutral"}>
+                    {p.isFreeSample ? "Free Sample" : `${p.quality} scan`}
+                  </Badge>
                 </div>
-              )}
-            </Card>
-          );
-        })}
-      </div>
-    )}
+                <small>{p.examType} · {p.examYearEc ? `${p.examYearEc} E.C.` : `${p.academicYear}`}</small>
+                <Heading level={3}>{p.title}</Heading>
+                <p>{p.pageCount} pages · Verified scan</p>
 
-    <Card className="empty-callout">
-      <div className="card-icon"><Icon name="help"/></div>
-      <div>
-        <Heading level={3}>Have past exams for {course.code}?</Heading>
-        <p>Sell physical or photographed exam papers you hold to Fetena Hub Admin for a direct cash payout via Telebirr or CBE.</p>
-      </div>
-      <Button variant="secondary" onClick={() => go("requests")}>Sell a paper</Button>
-    </Card>
-  </>;
+                {p.hasSolution && (
+                  <div className="paper-solution-badge">
+                    💡 Verified Solution Attached
+                  </div>
+                )}
+
+                {canOpen ? (
+                  <Button
+                    onClick={() => {
+                      onSelectPaper(p);
+                      go("viewer");
+                    }}
+                    variant={i === 0 ? "primary" : "secondary"}
+                    className="full"
+                  >
+                    <Icon name="eye"/> {p.isFreeSample ? "Open free sample" : "Open paper"}
+                  </Button>
+                ) : (
+                  <div className="locked-action" style={{ cursor: "pointer" }} onClick={() => go("checkout")}>
+                    <Icon name="lock"/>
+                    <span>Unlock semester (50 ETB)</span>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <Card className="empty-callout">
+        <div className="card-icon"><Icon name="help"/></div>
+        <div>
+          <Heading level={3}>Have past exams for {course.code}?</Heading>
+          <p>Sell physical or photographed exam papers you hold to Fetena Hub Admin for a direct cash payout via Telebirr or CBE.</p>
+        </div>
+        <Button variant="secondary" onClick={() => go("requests")}>Sell a paper</Button>
+      </Card>
+    </>
+  );
 }
 
 // -------------------------------------------------------------
@@ -1523,6 +1648,8 @@ function Course({
 function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUser: UserSession; paper?: StoreExamPaper | null }) {
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(100);
+  const [activeTab, setActiveTab] = useState<'questions' | 'solution'>('questions');
+  const [solutionCopied, setSolutionCopied] = useState(false);
   const [accessState, setAccessState] = useState<{ allowed: boolean; reason?: string; pageCount?: number } | null>(null);
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [pageLoading, setPageLoading] = useState(true);
@@ -1534,11 +1661,15 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportFeedback, setReportFeedback] = useState<string | null>(null);
 
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+
   useEffect(() => {
     let current = true;
     setCheckingAccess(true);
     setAccessState(null);
     setPage(1);
+    setActiveTab('questions');
     if (!paper) {
       setCheckingAccess(false);
       return () => { current = false; };
@@ -1565,6 +1696,42 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
   }, [paper?.id, page, pageRequestVersion]);
 
   const totalPages = accessState?.pageCount || paper?.pageCount || 1;
+
+  // Progressive Next/Previous Page Preloading for Zero-Latency Mobile Turn
+  useEffect(() => {
+    if (paper && accessState?.allowed) {
+      if (page < totalPages) {
+        const nextImg = new Image();
+        nextImg.src = `/api/papers/${encodeURIComponent(paper.id)}/pages/${page + 1}?userId=${encodeURIComponent(currentUser.userId)}`;
+      }
+      if (page > 1) {
+        const prevImg = new Image();
+        prevImg.src = `/api/papers/${encodeURIComponent(paper.id)}/pages/${page - 1}?userId=${encodeURIComponent(currentUser.userId)}`;
+      }
+    }
+  }, [paper?.id, page, totalPages, accessState?.allowed, currentUser.userId]);
+
+  // Touch swipe handlers for phone screens
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null || touchStartY.current === null) return;
+    const diffX = e.changedTouches[0].clientX - touchStartX.current;
+    const diffY = e.changedTouches[0].clientY - touchStartY.current;
+    touchStartX.current = null;
+    touchStartY.current = null;
+
+    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 45) {
+      if (diffX < 0 && page < totalPages) {
+        setPage((p) => p + 1);
+      } else if (diffX > 0 && page > 1) {
+        setPage((p) => p - 1);
+      }
+    }
+  };
 
   const handleReportProblem = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1654,80 +1821,213 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
           <Button variant="ghost" onClick={() => go("course")}><Icon name="close"/></Button>
           <span>
             <strong>{paper ? paper.title : "Exam Paper"}</strong>
-            <small>{paper ? `${paper.courseCode} · ${totalPages} pages` : "Protected Watermarked Viewer"} · Server-rendered pages</small>
+            <small>
+              {paper ? `${paper.courseCode} · ${totalPages} pages` : "Protected Watermarked Viewer"}
+              {paper?.hasSolution ? " · 💡 Verified Solutions Available" : ""}
+            </small>
           </span>
         </div>
+
+        {/* Segmented Mode Switcher: Questions vs Solutions */}
+        <div className="viewer-mode-switcher">
+          <button
+            type="button"
+            className={`viewer-mode-btn ${activeTab === 'questions' ? 'active' : ''}`}
+            onClick={() => setActiveTab('questions')}
+          >
+            📄 Exam Questions
+          </button>
+          <button
+            type="button"
+            className={`viewer-mode-btn ${activeTab === 'solution' ? 'active' : ''}`}
+            onClick={() => setActiveTab('solution')}
+          >
+            💡 Solutions & Answers
+          </button>
+        </div>
+
         <div className="viewer-tools">
-          <Button variant="ghost" onClick={() => setZoom(z => Math.max(50, z - 15))}>−</Button>
-          <span>{zoom}%</span>
-          <Button variant="ghost" onClick={() => setZoom(z => Math.min(200, z + 15))}>+</Button>
-          <Button variant="ghost" onClick={() => {
-            if (!document.fullscreenElement) {
-              document.documentElement.requestFullscreen?.();
-            } else {
-              document.exitFullscreen?.();
-            }
-          }}><Icon name="eye"/> Fullscreen</Button>
-          <Button variant="ghost" onClick={() => setShowReportModal(true)}><Icon name="help"/> Report problem</Button>
+          {activeTab === 'questions' && (
+            <>
+              <Button variant="ghost" onClick={() => setZoom((z) => Math.max(50, z - 15))}>−</Button>
+              <span>{zoom}%</span>
+              <Button variant="ghost" onClick={() => setZoom((z) => Math.min(200, z + 15))}>+</Button>
+            </>
+          )}
+          <Button
+            variant="ghost"
+            onClick={() => {
+              if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen?.();
+              } else {
+                document.exitFullscreen?.();
+              }
+            }}
+          >
+            <Icon name="eye"/> Fullscreen
+          </Button>
+          <Button variant="ghost" onClick={() => setShowReportModal(true)}>
+            <Icon name="help"/> Report
+          </Button>
         </div>
       </div>
 
-      <div className="pdf-stage" style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto" }}>
+      {activeTab === 'solution' ? (
+        /* Verified Solution Key Stage */
+        <div className="pdf-stage" style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto" }}>
+          <div
+            style={{
+              width: "min(100%, 820px)",
+              minHeight: "calc(100vh - 160px)",
+              background: "#ffffff",
+              color: "#1e293b",
+              boxShadow: "0 10px 50px rgba(0,0,0,.4)",
+              borderRadius: "8px",
+              padding: "36px 32px",
+              position: "relative",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid var(--line)", paddingBottom: "16px", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+              <div>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#dcfce7", color: "#166534", padding: "3px 10px", borderRadius: "100px", fontSize: "0.78rem", fontWeight: 700 }}>
+                  <Icon name="check" size={14} /> VERIFIED EXAM SOLUTION KEY
+                </span>
+                <Heading level={2} style={{ marginTop: "8px", color: "var(--ink)" }}>
+                  {paper ? `${paper.courseCode} · Answer Key & Explanations` : "Exam Solutions"}
+                </Heading>
+                <small style={{ color: "var(--muted)" }}>
+                  {paper?.title} · Ambo University Freshman Preparation Archive
+                </small>
+              </div>
+
+              {paper?.solutionText && (
+                <Button
+                  variant="secondary"
+                  style={{ fontSize: "0.8rem", minHeight: "34px", padding: "0 12px" }}
+                  onClick={() => {
+                    navigator.clipboard.writeText(paper.solutionText || '');
+                    setSolutionCopied(true);
+                    setTimeout(() => setSolutionCopied(false), 2000);
+                  }}
+                >
+                  {solutionCopied ? "✓ Copied to clipboard" : "📋 Copy solution key"}
+                </Button>
+              )}
+            </div>
+
+            {paper?.solutionText ? (
+              <div
+                style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  fontSize: "0.92rem",
+                  lineHeight: "1.75",
+                  whiteSpace: "pre-wrap",
+                  background: "#f8fafc",
+                  padding: "24px",
+                  borderRadius: "8px",
+                  border: "1px solid #e2e8f0",
+                  color: "#0f172a",
+                }}
+              >
+                {paper.solutionText}
+              </div>
+            ) : paper?.solutionStorageKey ? (
+              <div style={{ textAlign: "center", padding: "48px 20px" }}>
+                <Icon name="file" size={48} />
+                <h3 style={{ marginTop: "16px", color: "var(--ink)" }}>
+                  Solution Document: {paper.solutionFileName || "Verified Answer Sheet"}
+                </h3>
+                <p style={{ color: "var(--muted)", maxWidth: "480px", margin: "8px auto 20px" }}>
+                  An official answer key document is attached to this exam paper.
+                </p>
+                <Button
+                  onClick={() => {
+                    alert('Attached solution document verified by faculty.');
+                  }}
+                >
+                  <Icon name="eye" /> View Solution Document
+                </Button>
+              </div>
+            ) : (
+              <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--muted)" }}>
+                <Icon name="help" size={40} />
+                <h3 style={{ marginTop: "14px", color: "var(--ink)" }}>No Verified Answer Key Attached Yet</h3>
+                <p style={{ maxWidth: "440px", margin: "8px auto 20px" }}>
+                  Moderators and university instructors have not yet attached an answer key for this specific paper.
+                </p>
+                <Button variant="secondary" onClick={() => setActiveTab('questions')}>
+                  Back to exam questions
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* Questions Stage with Touch Swipe & Zoom */
         <div
-          className="pdf-page-container"
-          style={{
-            position: "relative",
-            width: `min(100%, ${Math.round(820 * (zoom / 100))}px)`,
-            minHeight: "calc(100vh - 160px)",
-            background: "#ffffff",
-            boxShadow: "0 10px 50px rgba(0,0,0,.4)",
-            borderRadius: "4px",
-            overflow: "hidden",
-          }}
+          className="pdf-stage"
+          style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto" }}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
         >
-          {checkingAccess ? (
-            <div style={{ minHeight: "calc(100vh - 160px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted)", padding: "40px" }}>
-              <Icon name="clock" size={32} />
-              <p style={{ marginTop: "12px" }}>Loading protected page...</p>
-            </div>
-          ) : pageLoadError ? (
-            <div style={{ minHeight: "calc(100vh - 160px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted)", padding: "40px", textAlign: "center" }}>
-              <Icon name="help" size={32} />
-              <p style={{ marginTop: "12px" }}>This page could not be loaded. Your access may have expired or the paper may be unavailable.</p>
-              <Button variant="secondary" onClick={() => setPageRequestVersion((version) => version + 1)}>Retry page</Button>
-            </div>
-          ) : paper && accessState?.allowed ? (
-            <img
-              key={`${paper.id}-${page}-${pageRequestVersion}`}
-              src={`/api/papers/${encodeURIComponent(paper.id)}/pages/${page}?userId=${encodeURIComponent(currentUser.userId)}`}
-              alt={`${paper.title}, page ${page}`}
-              draggable={false}
-              onLoad={() => setPageLoading(false)}
-              onError={() => {
-                setPageLoading(false);
-                setPageLoadError(true);
-              }}
-              style={{ width: "100%", height: "auto", display: "block", userSelect: "none" }}
-            />
-          ) : (
-            <div style={{ minHeight: "calc(100vh - 160px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted)", padding: "40px" }}>
-              <Icon name="clock" size={32} />
-              <p style={{ marginTop: "12px" }}>No paper is selected.</p>
-            </div>
-          )}
-          {pageLoading && !checkingAccess && !pageLoadError && accessState?.allowed && (
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", pointerEvents: "none" }}>
-              <Icon name="clock" size={32} />
-            </div>
-          )}
+          <div
+            className="pdf-page-container"
+            style={{
+              position: "relative",
+              width: `min(100%, ${Math.round(820 * (zoom / 100))}px)`,
+              minHeight: "calc(100vh - 160px)",
+              background: "#ffffff",
+              boxShadow: "0 10px 50px rgba(0,0,0,.4)",
+              borderRadius: "4px",
+              overflow: "hidden",
+            }}
+          >
+            {checkingAccess ? (
+              <div style={{ minHeight: "calc(100vh - 160px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted)", padding: "40px" }}>
+                <Icon name="clock" size={32} />
+                <p style={{ marginTop: "12px" }}>Loading protected page...</p>
+              </div>
+            ) : pageLoadError ? (
+              <div style={{ minHeight: "calc(100vh - 160px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted)", padding: "40px", textAlign: "center" }}>
+                <Icon name="help" size={32} />
+                <p style={{ marginTop: "12px" }}>This page could not be loaded. Your access may have expired or the paper may be unavailable.</p>
+                <Button variant="secondary" onClick={() => setPageRequestVersion((version) => version + 1)}>Retry page</Button>
+              </div>
+            ) : paper && accessState?.allowed ? (
+              <img
+                key={`${paper.id}-${page}-${pageRequestVersion}`}
+                src={`/api/papers/${encodeURIComponent(paper.id)}/pages/${page}?userId=${encodeURIComponent(currentUser.userId)}`}
+                alt={`${paper.title}, page ${page}`}
+                draggable={false}
+                onLoad={() => setPageLoading(false)}
+                onError={() => {
+                  setPageLoading(false);
+                  setPageLoadError(true);
+                }}
+                style={{ width: "100%", height: "auto", display: "block", userSelect: "none" }}
+              />
+            ) : (
+              <div style={{ minHeight: "calc(100vh - 160px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted)", padding: "40px" }}>
+                <Icon name="clock" size={32} />
+                <p style={{ marginTop: "12px" }}>No paper is selected.</p>
+              </div>
+            )}
+            {pageLoading && !checkingAccess && !pageLoadError && accessState?.allowed && (
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", pointerEvents: "none" }}>
+                <Icon name="clock" size={32} />
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="page-control">
-        <Button variant="secondary" onClick={() => setPage(Math.max(1, page - 1))} disabled={page <= 1}>←</Button>
-        <span>Page <strong>{page}</strong> of {totalPages}</span>
-        <Button variant="secondary" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>→</Button>
-      </div>
+      {activeTab === 'questions' && (
+        <div className="page-control">
+          <Button variant="secondary" onClick={() => setPage(Math.max(1, page - 1))} disabled={page <= 1}>←</Button>
+          <span>Page <strong>{page}</strong> of {totalPages}</span>
+          <Button variant="secondary" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>→</Button>
+        </div>
+      )}
 
       {/* Report a Problem Modal */}
       {showReportModal && (
