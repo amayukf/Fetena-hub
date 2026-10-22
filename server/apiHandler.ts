@@ -348,9 +348,19 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     // -------------------------------------------------------------
     // GET /health and GET /api/health - System Health Check
     // -------------------------------------------------------------
-    if ((pathname === '/health' || pathname === '/api/health') && method === 'GET') {
+    // GET or HEAD /health - Database & Storage Liveness Check
+    // -------------------------------------------------------------
+    if ((pathname === '/health' || pathname === '/api/health') && (method === 'GET' || method === 'HEAD')) {
       try {
         await prisma.$queryRaw`SELECT 1`;
+        if (method === 'HEAD') {
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+          });
+          res.end();
+          return;
+        }
         return sendJson(res, 200, {
           status: 'ok',
           database: 'connected',
