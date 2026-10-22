@@ -248,7 +248,7 @@ footer small { grid-column: span 2; color: var(--muted); border-top: 1px solid v
 .side-bottom { margin-top: auto; border-top: 1px solid var(--line); padding-top: 10px; }
 .side-bottom small { display: block; color: #9ca9a5; padding: 12px; font-size: .65rem; }
 .main { max-width: 1500px; margin: auto; padding: 42px 42px 80px; }
-.menu-btn, .mobile-side-head { display: none; }
+.menu-btn, .mobile-side-head, .sidebar-backdrop { display: none; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
 .page-head > div:first-child { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .page-head p { font-size: .93rem; }
@@ -586,10 +586,20 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
   .auth-mobile-logo { display: block; margin-bottom: 35px; }
   .app-shell { padding-left: 0; }
   .menu-btn { display: inline-flex; padding: 0 8px; }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(18, 30, 27, 0.45);
+    backdrop-filter: blur(2px);
+    z-index: 25;
+    animation: fadeInBackdrop 0.18s ease;
+  }
   .sidebar { top: 0; width: min(86vw,300px); transform: translateX(-105%); transition: .22s ease; box-shadow: 20px 0 60px rgba(0,0,0,.18); z-index: 30; }
+  .sidebar .nav-item { min-height: 48px; }
   .sidebar-open { transform: translateX(0); }
   .mobile-side-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-  .topbar { padding: 0 18px; }
+  .topbar { padding: 0 16px; }
   .content-grid, .admin-grid, .admin-grid.lower, .structure-grid, .settings-grid { grid-template-columns: 1fr; }
   .semester-grid { grid-template-columns: 1fr 1fr; }
   .add-semester { grid-column: span 2; min-height: 100px; }
@@ -628,12 +638,21 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
   .auth-form { padding: 24px 10px; align-items: start; }
   .auth-form .card { padding: 18px; }
   .form-grid { grid-template-columns: 1fr; }
+  .topbar { padding: 0 14px; height: 64px; }
   .topbar .logo > span:last-child { display: none; }
+  .topbar-actions { gap: 8px; }
   .topbar-actions .language { display: none; }
-  .main { padding: 26px 16px 60px; }
-  .page-head { align-items: flex-start; flex-direction: column; margin-bottom: 24px; }
-  .page-head .heading-1 { font-size: 1.8rem; }
-  .welcome-banner { padding: 24px; }
+  .icon-button, .avatar { width: 38px; height: 38px; }
+  .role-pill-btn { padding: 3px 8px !important; font-size: 0.72rem !important; gap: 4px !important; }
+  .role-pill-btn span { max-width: 85px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .main { padding: 22px 14px 60px; }
+  .page-head { align-items: flex-start; flex-direction: column; margin-bottom: 20px; }
+  .page-head .heading-1 { font-size: 1.7rem; }
+  .welcome-banner { padding: 20px 16px; border-radius: var(--radius-md, 12px); }
+  .welcome-banner > div:first-child { width: 100%; }
+  .welcome-banner h2 { font-size: 1.35rem; line-height: 1.25; margin: 4px 0 6px; }
+  .welcome-banner p { font-size: 0.84rem; line-height: 1.4; }
+  .welcome-banner .btn, .welcome-banner-btn { width: 100%; justify-content: center; min-height: 44px; margin-top: 14px; }
   .progress-ring { display: none; }
   .semester-grid { grid-template-columns: 1fr; }
   .add-semester { grid-column: 1; }
@@ -644,15 +663,18 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
   .selector-card { padding: 20px 16px; }
   .choice-list .badge { display: none; }
   .year-grid { grid-template-columns: 1fr 1fr; }
-  .unlock-card { display: flex; flex-direction: column; align-items: flex-start; padding: 22px; }
+  .unlock-card { display: flex; flex-direction: column; align-items: flex-start; padding: 20px 16px; }
   .unlock-price { width: 100%; flex-direction: column; }
   .unlock-price .btn { width: 100%; }
   .section-title { align-items: flex-start; }
   .section-title .field { display: none; }
+  .course-row { padding: 14px; gap: 10px; border-radius: var(--radius-sm, 8px); }
   .course-row .course-icon { display: none; }
-  .course-row .badge { order: 3; }
-  .course-row .btn { width: 100%; order: 4; }
-  .paper-grid { grid-template-columns: 1fr; }
+  .course-row .badge { order: 3; align-self: flex-start; }
+  .course-row .btn { width: 100%; order: 4; min-height: 42px; justify-content: center; }
+  .paper-grid { grid-template-columns: 1fr; gap: 14px; }
+  .paper-card { padding: 16px; }
+  .paper-card .paper-actions, .paper-card .btn { width: 100%; justify-content: center; }
   .filter-row .badge { display: none; }
   .empty-callout { align-items: flex-start; flex-wrap: wrap; }
   .empty-callout .btn { width: 100%; }
@@ -884,6 +906,24 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
   gap: 14px;
   align-items: flex-start;
   color: #8c5b00;
+}
+
+/* Mobile & Touch UX Enhancements */
+@keyframes fadeInBackdrop {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+button, .btn, .nav-item, .card {
+  touch-action: manipulation;
+}
+
+.btn:active, .nav-item:active, .icon-button:active {
+  transform: scale(0.97);
+}
+
+.tabs, .table-tools > div {
+  -webkit-overflow-scrolling: touch;
 }
 
 

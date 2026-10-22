@@ -292,6 +292,7 @@ function Shell({
       isAdminScreen={isAdminScreen}
       onLogout={onLogout}
     />
+    {open && <div className="sidebar-backdrop" onClick={() => setOpen(false)} aria-hidden="true" />}
     <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
       <div className="mobile-side-head"><Logo/><Button variant="ghost" onClick={() => setOpen(false)}><Icon name="close"/></Button></div>
       <div className="side-context">
@@ -987,6 +988,13 @@ export function PageHead({ eyebrow, title, text, action }: { eyebrow?: string; t
 // STUDENT PORTAL SCREENS
 // -------------------------------------------------------------
 
+function getTimeGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
 function Dashboard({
   go,
   currentUser,
@@ -1023,7 +1031,7 @@ function Dashboard({
   return <>
     <PageHead
       eyebrow="AMBO UNIVERSITY"
-      title={`Good morning, ${currentUser.fullName.split(" ")[0]}.`}
+      title={`${getTimeGreeting()}, ${currentUser.fullName.split(" ")[0]}.`}
       text={`Freshman ${streamLabel} · Year 1 exam preparation`}
     />
     <Card className="welcome-banner">
