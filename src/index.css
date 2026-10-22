@@ -217,15 +217,6 @@ footer small { grid-column: span 2; color: var(--muted); border-top: 1px solid v
 .auth-separator span {
   padding: 0 12px;
 }
-.google-demo-box {
-  background: #f0fdf4;
-  border: 1px dashed #86efac;
-  border-radius: var(--radius-sm, 8px);
-  padding: 14px;
-  margin-top: 14px;
-  font-size: 0.85rem;
-  color: #166534;
-}
 
 /* Application shell */
 .app-shell { min-height: 100vh; padding: 76px 0 0 256px; }
@@ -922,8 +913,117 @@ button, .btn, .nav-item, .card {
   transform: scale(0.97);
 }
 
-.tabs, .table-tools > div {
+.tabs, .table-tools > div, .filter-chips-row {
   -webkit-overflow-scrolling: touch;
+}
+
+/* Viewer Mode Switcher (Questions vs Solutions) */
+.viewer-mode-switcher {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9999px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.viewer-mode-btn {
+  background: transparent;
+  color: #9daba7;
+  border: none;
+  border-radius: 9999px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 650;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.viewer-mode-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.viewer-mode-btn.active {
+  background: var(--accent, #166b55);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+/* Filter Chips */
+.filter-chips-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 4px 0;
+}
+
+.filter-chips-row::-webkit-scrollbar {
+  display: none;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid var(--line, #cbdad3);
+  background: #ffffff;
+  color: var(--ink, #12201b);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.filter-chip:hover {
+  background: #f1f5f3;
+  border-color: #9fb5ab;
+}
+
+.filter-chip.active {
+  background: var(--ink, #12201b);
+  color: #ffffff;
+  border-color: var(--ink, #12201b);
+}
+
+.filter-chip.solution-chip {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.filter-chip.solution-chip:hover {
+  background: #dcfce7;
+}
+
+.filter-chip.solution-chip.active {
+  background: #166534;
+  color: #ffffff;
+  border-color: #166534;
+}
+
+/* Paper Solution Badge */
+.paper-solution-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.74rem;
+  font-weight: 650;
+  margin: 6px 0;
 }
 
 

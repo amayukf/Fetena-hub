@@ -88,6 +88,13 @@ export interface ExamPaperItem {
   isFreeSample: boolean;
   status: PaperStatus;
   publishedAt: string | null;
+  hasSolution?: boolean;
+  solutionText?: string;
+  solutionStorageKey?: string;
+  solutionPageCount?: number;
+  solutionFileName?: string;
+  solutionVerified?: boolean;
+  solutionUpdatedAt?: string;
 }
 
 export interface PaymentRecord {

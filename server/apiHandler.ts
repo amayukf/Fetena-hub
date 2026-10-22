@@ -3530,7 +3530,38 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         );
       }
 
-      return sendJson(res, 200, papers);
+      // Merge solution metadata from SystemSetting
+      const solutionSettings = await prisma.systemSetting.findMany({
+        where: { key: { startsWith: 'paper_solution:' } },
+      });
+      const solutionMap = new Map<string, any>();
+      for (const s of solutionSettings) {
+        try {
+          const paperId = s.key.replace('paper_solution:', '');
+          solutionMap.set(paperId, JSON.parse(s.value));
+        } catch {
+          // ignore parsing error
+        }
+      }
+
+      const enrichedPapers = papers.map((p) => {
+        const sol = solutionMap.get(p.id);
+        if (sol && (sol.hasSolution || sol.solutionText || sol.solutionStorageKey)) {
+          return {
+            ...p,
+            hasSolution: true,
+            solutionText: sol.solutionText,
+            solutionStorageKey: sol.solutionStorageKey,
+            solutionPageCount: sol.solutionPageCount,
+            solutionFileName: sol.solutionFileName,
+            solutionVerified: sol.solutionVerified ?? true,
+            solutionUpdatedAt: sol.solutionUpdatedAt,
+          };
+        }
+        return p;
+      });
+
+      return sendJson(res, 200, enrichedPapers);
     }
 
     // -------------------------------------------------------------
@@ -3694,6 +3725,165 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     }
 
     // -------------------------------------------------------------
+    // GET /api/papers/:id/solution - Get Verified Exam Solutions
+    // -------------------------------------------------------------
+    if (pathname.startsWith('/api/papers/') && pathname.endsWith('/solution') && method === 'GET') {
+      const parts = pathname.split('/');
+      const paperId = parts[3];
+      const actor = await resolveActor(req, undefined, url.searchParams);
+
+      const paper = await prisma.examPaper.findUnique({
+        where: { id: paperId },
+        include: { course: true },
+      });
+      if (!paper || paper.deletedAt !== null) {
+        return sendError(res, 404, 'Exam paper not found.');
+      }
+
+      // Check access if paper is not free sample
+      const canManage = actor && (actor.role === Role.ADMIN || actor.role === Role.CONTENT_MANAGER);
+      if (!canManage && !paper.isFreeSample) {
+        if (!actor || !actor.user) {
+          return sendError(res, 401, 'Authentication required to view exam solutions.');
+        }
+        const entitlements = await prisma.entitlement.findMany({
+          where: { userId: actor.id, isActive: true },
+          include: { programTerm: { include: { courses: true } } },
+        });
+        const entitlementContexts = entitlements.map((e) => ({
+          userId: e.userId,
+          isActive: e.isActive,
+          validUntil: e.validUntil ? e.validUntil.toISOString() : null,
+          courseIds: e.programTerm.courses.map((c) => c.courseId),
+        }));
+
+        const check = verifyPaperAccess(
+          actor.user ? { ...actor.user, deletedAt: actor.user.deletedAt ? actor.user.deletedAt.toISOString() : null } : null,
+          {
+            id: paper.id,
+            courseId: paper.courseId,
+            status: paper.status,
+            isFreeSample: paper.isFreeSample,
+            deletedAt: null,
+            course: {
+              id: paper.course.id,
+              isActive: paper.course.isActive,
+              deletedAt: paper.course.deletedAt ? paper.course.deletedAt.toISOString() : null,
+            },
+          },
+          entitlementContexts
+        );
+
+        if (!check.allowed) {
+          return sendError(res, 403, 'Access denied to this exam solution.');
+        }
+      }
+
+      const settingKey = `paper_solution:${paperId}`;
+      const record = await prisma.systemSetting.findUnique({ where: { key: settingKey } });
+      if (!record) {
+        return sendJson(res, 200, { hasSolution: false, message: 'No solutions attached for this paper yet.' });
+      }
+
+      try {
+        const solutionData = JSON.parse(record.value);
+        return sendJson(res, 200, {
+          paperId,
+          ...solutionData,
+          hasSolution: true,
+        });
+      } catch {
+        return sendJson(res, 200, {
+          paperId,
+          hasSolution: true,
+          solutionText: record.value,
+        });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // PUT /api/papers/:id/solution - Attach or Update Exam Solution
+    // -------------------------------------------------------------
+    if (pathname.startsWith('/api/papers/') && pathname.endsWith('/solution') && method === 'PUT') {
+      const parts = pathname.split('/');
+      const paperId = parts[3];
+      const body = await parseBody(req);
+      const actor = await resolveActor(req, body, url.searchParams);
+
+      if (!actor || (actor.role !== Role.ADMIN && actor.role !== Role.CONTENT_MANAGER)) {
+        return sendError(res, 403, 'Permission denied: Only administrators and content managers can manage solutions.');
+      }
+
+      const paper = await prisma.examPaper.findUnique({
+        where: { id: paperId },
+        include: { course: true },
+      });
+      if (!paper) {
+        return sendError(res, 404, 'Exam paper not found.');
+      }
+
+      const settingKey = `paper_solution:${paperId}`;
+
+      // If body.remove is true or hasSolution is explicitly false with no text/key, delete solution
+      if (body.remove || (body.hasSolution === false && !body.solutionText && !body.solutionStorageKey)) {
+        await prisma.systemSetting.deleteMany({ where: { key: settingKey } });
+        await prisma.auditLog.create({
+          data: {
+            action: 'Exam solution removed',
+            entityType: 'ExamPaper',
+            entityId: paperId,
+            actorId: actor.id,
+            riskLevel: AuditRiskLevel.LOW,
+            details: { paperTitle: paper.title, courseCode: paper.course.code },
+          },
+        });
+        return sendJson(res, 200, { success: true, hasSolution: false });
+      }
+
+      const solutionPayload = {
+        hasSolution: true,
+        solutionText: typeof body.solutionText === 'string' ? body.solutionText : '',
+        solutionStorageKey: body.solutionStorageKey || null,
+        solutionPageCount: body.solutionPageCount ? Number(body.solutionPageCount) : 1,
+        solutionFileName: body.solutionFileName || null,
+        solutionVerified: body.solutionVerified !== false,
+        solutionUpdatedAt: new Date().toISOString(),
+        updatedBy: actor.user?.fullName || actor.id,
+      };
+
+      await prisma.systemSetting.upsert({
+        where: { key: settingKey },
+        update: {
+          value: JSON.stringify(solutionPayload),
+          description: `Solution key for paper ${paperId} (${paper.title})`,
+        },
+        create: {
+          key: settingKey,
+          value: JSON.stringify(solutionPayload),
+          description: `Solution key for paper ${paperId} (${paper.title})`,
+        },
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          action: 'Exam solution attached/updated',
+          entityType: 'ExamPaper',
+          entityId: paperId,
+          actorId: actor.id,
+          riskLevel: AuditRiskLevel.LOW,
+          details: {
+            paperTitle: paper.title,
+            courseCode: paper.course.code,
+            hasText: Boolean(solutionPayload.solutionText),
+            hasFile: Boolean(solutionPayload.solutionStorageKey),
+          },
+        },
+      });
+
+      return sendJson(res, 200, { success: true, ...solutionPayload });
+    }
+
+    // -------------------------------------------------------------
     // PUT /api/papers/:id - Update Paper Metadata & Status
     // -------------------------------------------------------------
     if (
@@ -3704,6 +3894,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       !pathname.includes('/stream') &&
       !pathname.includes('/pages') &&
       !pathname.includes('/report') &&
+      !pathname.includes('/solution') &&
       method === 'PUT'
     ) {
       const parts = pathname.split('/');

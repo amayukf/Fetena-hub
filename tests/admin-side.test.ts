@@ -261,6 +261,73 @@ describe('STEP 10: Complete Admin Side Backend & Role Separation', () => {
       expect(deleteRes.status).toBe(403);
     });
 
+    it('Admin can attach, view, and remove verified solutions on exam papers', async () => {
+      // 1. Attach solution
+      const putRes = await callApi(
+        'PUT',
+        `/api/papers/${testPaper.id}/solution`,
+        {
+          solutionText: '1. B - Verified reason\n2. C - Step by step proof',
+          solutionVerified: true,
+        },
+        {
+          'x-actor-id': adminUser.id,
+          'x-actor-role': 'ADMIN',
+        }
+      );
+      expect(putRes.status).toBe(200);
+      expect(putRes.body.hasSolution).toBe(true);
+      expect(putRes.body.solutionText).toContain('1. B - Verified reason');
+
+      // 2. Fetch paper solution
+      const getRes = await callApi(
+        'GET',
+        `/api/papers/${testPaper.id}/solution`,
+        undefined,
+        {
+          'x-actor-id': adminUser.id,
+          'x-actor-role': 'ADMIN',
+        }
+      );
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.hasSolution).toBe(true);
+      expect(getRes.body.solutionText).toContain('2. C - Step by step proof');
+
+      // 3. Papers listing includes hasSolution: true
+      const listRes = await callApi('GET', '/api/papers', undefined, {
+        'x-actor-id': adminUser.id,
+        'x-actor-role': 'ADMIN',
+      });
+      expect(listRes.status).toBe(200);
+      const paperInList = listRes.body.find((p: any) => p.id === testPaper.id);
+      expect(paperInList?.hasSolution).toBe(true);
+
+      // 4. Unauthorized payment verifier cannot manage solutions
+      const unauthRes = await callApi(
+        'PUT',
+        `/api/papers/${testPaper.id}/solution`,
+        { solutionText: 'hacked' },
+        {
+          'x-actor-id': paymentVerifierUser.id,
+          'x-actor-role': 'PAYMENT_VERIFIER',
+        }
+      );
+      expect(unauthRes.status).toBe(403);
+
+      // 5. Clean up / remove solution
+      const removeRes = await callApi(
+        'PUT',
+        `/api/papers/${testPaper.id}/solution`,
+        { remove: true },
+        {
+          'x-actor-id': adminUser.id,
+          'x-actor-role': 'ADMIN',
+        }
+      );
+      expect(removeRes.status).toBe(200);
+      expect(removeRes.body.hasSolution).toBe(false);
+    });
+
     it('Non-admin cannot change user roles (403), strictly ADMIN only', async () => {
       // Content Manager trying to change a student to ADMIN
       const cmRes = await callApi(

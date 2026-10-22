@@ -379,6 +379,18 @@ export const api = {
     });
   },
 
+  async getPaperSolution(paperId: string) {
+    return request<any>(`/api/papers/${encodeURIComponent(paperId)}/solution`);
+  },
+
+  async updatePaperSolution(paperId: string, solutionData: any, actorId?: string, actorRole?: string) {
+    return request<any>(`/api/papers/${encodeURIComponent(paperId)}/solution`, {
+      method: 'PUT',
+      headers: buildHeaders(actorId, actorRole, true),
+      body: solutionData,
+    });
+  },
+
   async getWantedPapers() {
     return request<any>('/api/wanted-papers');
   },

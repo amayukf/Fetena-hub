@@ -102,6 +102,13 @@ export interface StoreExamPaper {
   fileSizeBytes?: number;
   deletedAt?: string | null;
   viewsCount?: number;
+  hasSolution?: boolean;
+  solutionText?: string;
+  solutionStorageKey?: string;
+  solutionPageCount?: number;
+  solutionFileName?: string;
+  solutionVerified?: boolean;
+  solutionUpdatedAt?: string;
 }
 
 export interface StoreWantedPaper {
