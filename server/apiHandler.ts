@@ -3050,12 +3050,78 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       // Non-admins can strictly only inspect their own sessions
       const targetUserId = (actor.role === Role.ADMIN && requestedUserId) ? requestedUserId : actor.id;
 
+      const actorCookies = parseCookies(req);
+      const currentRawToken =
+        actorCookies['examvault_session'] || (req.headers['x-session-token'] as string) || null;
+      const currentTokenHash = currentRawToken ? sha256(currentRawToken) : null;
+
       const sessions = await prisma.session.findMany({
         where: { userId: targetUserId, expiresAt: { gt: new Date() } },
         orderBy: { createdAt: 'desc' },
       });
 
-      return sendJson(res, 200, sessions);
+      const enriched = sessions.map((s) => ({
+        id: s.id,
+        userId: s.userId,
+        ipAddress: s.ipAddress,
+        userAgent: s.userAgent,
+        createdAt: s.createdAt,
+        expiresAt: s.expiresAt,
+        isCurrent: Boolean(currentTokenHash && s.sessionTokenHash === currentTokenHash),
+      }));
+
+      return sendJson(res, 200, enriched);
+    }
+
+    if (pathname === '/api/auth/sessions/revoke-others' && method === 'POST') {
+      const actor = await resolveActor(req);
+      if (!actor) {
+        return sendError(res, 401, 'Unauthorized: Authentication required.');
+      }
+
+      const actorCookies = parseCookies(req);
+      const currentRawToken =
+        actorCookies['examvault_session'] || (req.headers['x-session-token'] as string) || null;
+      const currentTokenHash = currentRawToken ? sha256(currentRawToken) : null;
+
+      const result = await prisma.session.deleteMany({
+        where: {
+          userId: actor.id,
+          ...(currentTokenHash ? { sessionTokenHash: { not: currentTokenHash } } : {}),
+        },
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          action: 'Revoke other sessions',
+          entityType: 'User',
+          entityId: actor.id,
+          actorId: actor.id,
+          riskLevel: AuditRiskLevel.LOW,
+          details: { sessionsRevoked: result.count },
+        },
+      });
+
+      return sendJson(res, 200, { success: true, revokedCount: result.count });
+    }
+
+    if (pathname.startsWith('/api/auth/sessions/') && method === 'DELETE') {
+      const actor = await resolveActor(req);
+      if (!actor) {
+        return sendError(res, 401, 'Unauthorized: Authentication required.');
+      }
+      const sessionId = pathname.split('/')[4];
+      const session = await prisma.session.findUnique({ where: { id: sessionId } });
+      if (!session) {
+        return sendJson(res, 200, { success: true });
+      }
+      if (session.userId !== actor.id && actor.role !== Role.ADMIN) {
+        return sendError(res, 403, 'Forbidden: Cannot revoke sessions of another user.');
+      }
+
+      await prisma.session.delete({ where: { id: sessionId } });
+
+      return sendJson(res, 200, { success: true });
     }
 
     // -------------------------------------------------------------

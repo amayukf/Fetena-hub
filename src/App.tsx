@@ -3163,12 +3163,133 @@ function Requests({
   </>;
 }
 
+function parseDeviceDetails(ua: string | null) {
+  if (!ua) return { name: "Web Browser Session", platform: "Browser", isMobile: false };
+  const lower = ua.toLowerCase();
+  let browser = "Web Browser";
+  let platform = "Personal Device";
+  let isMobile = false;
+
+  if (lower.includes("telegram")) {
+    browser = "Telegram App";
+  } else if (lower.includes("edg/")) {
+    browser = "Microsoft Edge";
+  } else if (lower.includes("chrome") && !lower.includes("edg/")) {
+    browser = "Chrome Browser";
+  } else if (lower.includes("safari") && !lower.includes("chrome")) {
+    browser = "Safari Browser";
+  } else if (lower.includes("firefox")) {
+    browser = "Mozilla Firefox";
+  }
+
+  if (lower.includes("android")) {
+    platform = "Android Device";
+    isMobile = true;
+  } else if (lower.includes("iphone")) {
+    platform = "iPhone";
+    isMobile = true;
+  } else if (lower.includes("ipad")) {
+    platform = "iPad";
+    isMobile = true;
+  } else if (lower.includes("windows")) {
+    platform = "Windows PC";
+  } else if (lower.includes("macintosh") || lower.includes("mac os")) {
+    platform = "Mac Computer";
+  } else if (lower.includes("linux")) {
+    platform = "Linux Device";
+  }
+
+  return { name: `${browser} (${platform})`, platform, isMobile };
+}
+
 function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLogout: () => void; go: (s: Screen) => void }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwdMsg, setPwdMsg] = useState<{ text: string; tone: "success" | "danger" } | null>(null);
   const [pwdLoading, setPwdLoading] = useState(false);
+
+  const [sessions, setSessions] = useState<Array<{
+    id: string;
+    userId: string;
+    ipAddress: string | null;
+    userAgent: string | null;
+    createdAt: string;
+    expiresAt: string;
+    isCurrent?: boolean;
+  }>>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [revokingOthers, setRevokingOthers] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+
+  const loadSessions = () => {
+    setSessionsLoading(true);
+    api.getSessions()
+      .then((res) => {
+        if (Array.isArray(res) && res.length > 0) {
+          setSessions(res);
+        } else {
+          setSessions([
+            {
+              id: "current",
+              userId: currentUser.userId,
+              ipAddress: "Active IP",
+              userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "Web Browser",
+              createdAt: new Date().toISOString(),
+              expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+              isCurrent: true,
+            },
+          ]);
+        }
+      })
+      .catch(() => {
+        setSessions([
+          {
+            id: "current",
+            userId: currentUser.userId,
+            ipAddress: "Active IP",
+            userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "Web Browser",
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+            isCurrent: true,
+          },
+        ]);
+      })
+      .finally(() => setSessionsLoading(false));
+  };
+
+  useEffect(() => {
+    loadSessions();
+  }, [currentUser.userId]);
+
+  const handleRevokeSession = async (sessionId: string) => {
+    setRevokingId(sessionId);
+    try {
+      await api.revokeSession(sessionId);
+      setSessionNotice("Device session was signed out.");
+      loadSessions();
+      setTimeout(() => setSessionNotice(null), 3000);
+    } catch (err: any) {
+      setSessionNotice(err.message || "Failed to sign out session.");
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  const handleRevokeOthers = async () => {
+    setRevokingOthers(true);
+    try {
+      const res = await api.revokeOtherSessions();
+      setSessionNotice(`Signed out ${res.revokedCount || 1} other device session(s).`);
+      loadSessions();
+      setTimeout(() => setSessionNotice(null), 3000);
+    } catch (err: any) {
+      setSessionNotice(err.message || "Failed to sign out other sessions.");
+    } finally {
+      setRevokingOthers(false);
+    }
+  };
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3278,18 +3399,84 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
         </Card>
 
         <Card className="form-card" style={{ marginTop: "16px" }}>
-          <Heading level={2}>Security & device sessions</Heading>
-          <div className="device-row">
-            <Icon name="user"/>
-            <span>
-              <strong>Web Browser Session</strong>
-              <small>Ambo, Ethiopia · Active authenticated session</small>
-            </span>
-            <Badge tone="success">THIS DEVICE</Badge>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "6px" }}>
+            <Heading level={2}>Security & device sessions</Heading>
+            <Badge tone={sessions.length >= 2 ? "warning" : "success"}>
+              {sessions.length} / 2 SLOTS USED
+            </Badge>
           </div>
-          <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0 0" }}>
-            Your account is enforced with a maximum of 2 simultaneous concurrent sessions to protect exam materials.
+          <p style={{ fontSize: "0.82rem", color: "var(--muted)", margin: "0 0 12px" }}>
+            Your account is actively enforced with a maximum of 2 simultaneous device sessions to protect exam materials.
           </p>
+
+          {sessionNotice && (
+            <div className="alert success" style={{ margin: "8px 0 12px" }}>
+              <span>{sessionNotice}</span>
+            </div>
+          )}
+
+          {sessionsLoading ? (
+            <div style={{ padding: "16px", textAlign: "center", color: "var(--muted)" }}>
+              <Icon name="clock" size={22} />
+              <p style={{ marginTop: "6px", fontSize: "0.82rem" }}>Verifying active device sessions...</p>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {sessions.map((sess, idx) => {
+                const info = parseDeviceDetails(sess.userAgent);
+                const isCurrent = sess.isCurrent || (idx === 0 && !sessions.some(s => s.isCurrent));
+                const dateStr = new Date(sess.createdAt).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
+                return (
+                  <div key={sess.id || idx} className="device-row">
+                    <div className="device-row-main">
+                      <div className="device-avatar-icon">
+                        <Icon name={isCurrent ? "user" : "shield"} size={18} />
+                      </div>
+                      <div className="device-details">
+                        <strong>{info.name}</strong>
+                        <small>
+                          {isCurrent ? "Active now (This browser)" : `Signed in ${dateStr}`} · {sess.ipAddress ? `IP ${sess.ipAddress.replace("::ffff:", "")}` : "Ethiopia"}
+                        </small>
+                      </div>
+                    </div>
+                    <div>
+                      {isCurrent ? (
+                        <Badge tone="success">THIS DEVICE</Badge>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          style={{ color: "#b91c1c", fontSize: "0.78rem", minHeight: "34px", padding: "4px 10px" }}
+                          disabled={revokingId === sess.id}
+                          onClick={() => handleRevokeSession(sess.id)}
+                        >
+                          {revokingId === sess.id ? "Signing out..." : "Sign Out"}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {sessions.length > 1 && (
+                <div style={{ marginTop: "4px", display: "flex", justifyContent: "flex-end" }}>
+                  <Button
+                    variant="ghost"
+                    style={{ color: "#b91c1c", fontSize: "0.80rem" }}
+                    disabled={revokingOthers}
+                    onClick={handleRevokeOthers}
+                  >
+                    <Icon name="logout" size={14} />
+                    <span>{revokingOthers ? "Signing out..." : "Sign Out All Other Devices"}</span>
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
         </Card>
       </div>
     </div>

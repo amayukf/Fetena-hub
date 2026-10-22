@@ -574,6 +574,33 @@ export const api = {
     });
   },
 
+  async getSessions(userId?: string) {
+    const url = userId ? `/api/auth/sessions?userId=${encodeURIComponent(userId)}` : '/api/auth/sessions';
+    return request<Array<{
+      id: string;
+      userId: string;
+      ipAddress: string | null;
+      userAgent: string | null;
+      createdAt: string;
+      expiresAt: string;
+      isCurrent?: boolean;
+    }>>(url, { headers: buildHeaders(), silentAuth: true });
+  },
+
+  async revokeSession(sessionId: string) {
+    return request<any>(`/api/auth/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+      headers: buildHeaders(undefined, undefined, true),
+    });
+  },
+
+  async revokeOtherSessions() {
+    return request<any>('/api/auth/sessions/revoke-others', {
+      method: 'POST',
+      headers: buildHeaders(undefined, undefined, true),
+    });
+  },
+
   async getMyContributions() {
     return request<any>('/api/contributions/my');
   },
