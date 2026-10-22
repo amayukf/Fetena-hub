@@ -101,10 +101,11 @@ export function Heading({ level = 2, children, className = "", style }: { level?
   return <Tag style={style} className={`heading heading-${level} ${className}`}>{children}</Tag>;
 }
 
-export function Input({ label, placeholder, type = "text", value, onChange, disabled }: {
+export function Input({ label, placeholder, type = "text", value, onChange, disabled, autoCapitalize, autoCorrect, inputMode }: {
   label: string; placeholder: string; type?: string; value?: string; onChange?: (e: ChangeEvent<HTMLInputElement>) => void; disabled?: boolean;
+  autoCapitalize?: string; autoCorrect?: string; inputMode?: "search" | "text" | "email" | "tel" | "url" | "numeric" | "none" | "decimal";
 }) {
-  return <label className="field"><span>{label}</span><input type={type} placeholder={placeholder} value={value} onChange={onChange} disabled={disabled}/></label>;
+  return <label className="field"><span>{label}</span><input type={type} placeholder={placeholder} value={value} onChange={onChange} disabled={disabled} autoCapitalize={autoCapitalize} autoCorrect={autoCorrect} inputMode={inputMode}/></label>;
 }
 
 export function Select({ label, children, value, onChange }: { label: string; children: ReactNode; value?: string; onChange?: (e: ChangeEvent<HTMLSelectElement>) => void }) {
@@ -346,6 +347,124 @@ function Shell({
       </div>
     </aside>
     <main className="main">{children}</main>
+    <nav className="mobile-bottom-nav" aria-label="Mobile Navigation">
+      {isAdminScreen ? (
+        <>
+          <button
+            type="button"
+            className={`mobile-nav-item ${screen === "admin" ? "active" : ""}`}
+            onClick={() => go("admin")}
+          >
+            <div className="mobile-nav-icon-wrap">
+              <Icon name="home" size={20} />
+            </div>
+            <span>Overview</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-item ${screen === "papers" ? "active" : ""}`}
+            onClick={() => go("papers")}
+          >
+            <div className="mobile-nav-icon-wrap">
+              <Icon name="file" size={20} />
+            </div>
+            <span>Papers</span>
+          </button>
+          {!isContentManager && (
+            <button
+              type="button"
+              className={`mobile-nav-item ${screen === "admin-payments" ? "active" : ""}`}
+              onClick={() => go("admin-payments")}
+            >
+              <div className="mobile-nav-icon-wrap">
+                <Icon name="card" size={20} />
+                {effectivePendingCount > 0 && (
+                  <span className="mobile-nav-badge warning">{effectivePendingCount}</span>
+                )}
+              </div>
+              <span>Payments</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className={`mobile-nav-item ${screen === "contributions" ? "active" : ""}`}
+            onClick={() => go("contributions")}
+          >
+            <div className="mobile-nav-icon-wrap">
+              <Icon name="upload" size={20} />
+            </div>
+            <span>Uploads</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-item ${open ? "active" : ""}`}
+            onClick={() => setOpen(true)}
+            aria-label="More navigation options"
+          >
+            <div className="mobile-nav-icon-wrap">
+              <Icon name="layers" size={20} />
+            </div>
+            <span>More</span>
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            className={`mobile-nav-item ${screen === "dashboard" || screen === "semester" ? "active" : ""}`}
+            onClick={() => go("dashboard")}
+          >
+            <div className="mobile-nav-icon-wrap">
+              <Icon name="home" size={20} />
+            </div>
+            <span>Home</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-item ${screen === "browse" || screen === "course" ? "active" : ""}`}
+            onClick={() => go("browse")}
+          >
+            <div className="mobile-nav-icon-wrap">
+              <Icon name="search" size={20} />
+            </div>
+            <span>Exams</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-item ${screen === "requests" ? "active" : ""}`}
+            onClick={() => go("requests")}
+          >
+            <div className="mobile-nav-icon-wrap">
+              <Icon name="upload" size={20} />
+            </div>
+            <span>Sell/Ask</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-item ${screen === "notifications" ? "active" : ""}`}
+            onClick={() => go("notifications")}
+          >
+            <div className="mobile-nav-icon-wrap">
+              <Icon name="bell" size={20} />
+              {unreadNotifsCount > 0 && (
+                <span className="mobile-nav-badge">{unreadNotifsCount}</span>
+              )}
+            </div>
+            <span>Alerts</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-item ${screen === "profile" ? "active" : ""}`}
+            onClick={() => go("profile")}
+          >
+            <div className="mobile-nav-icon-wrap">
+              <Icon name="user" size={20} />
+            </div>
+            <span>Profile</span>
+          </button>
+        </>
+      )}
+    </nav>
   </div>;
 }
 
@@ -2004,7 +2123,7 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
                   setPageLoading(false);
                   setPageLoadError(true);
                 }}
-                style={{ width: "100%", height: "auto", display: "block", userSelect: "none" }}
+                style={{ width: "100%", height: "auto", display: "block", userSelect: "none", touchAction: "pan-y pinch-zoom" }}
               />
             ) : (
               <div style={{ minHeight: "calc(100vh - 160px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted)", padding: "40px" }}>
@@ -2124,7 +2243,28 @@ function Checkout({
   const [submittedPayment, setSubmittedPayment] = useState<StorePayment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const copyToClipboard = (text: string, fieldKey: string) => {
+    if (!text || text.startsWith("[")) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(text);
+      } else {
+        const el = document.createElement("textarea");
+        el.value = text;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+      }
+      setCopiedField(fieldKey);
+      setTimeout(() => setCopiedField((curr) => (curr === fieldKey ? null : curr)), 2500);
+    } catch {
+      // ignore
+    }
+  };
 
   // Only allow checkout for a payment method that is actually configured.
   // Previously the button was enabled if EITHER account existed, so a student
@@ -2340,23 +2480,93 @@ function Checkout({
               </span>
             </div>
             <div className="instruction-box">
-              <strong>Transfer {settings.semesterPriceEtb || 50} ETB to Ambo University</strong>
+              <strong style={{ fontSize: "0.95rem", color: "var(--primary)" }}>Transfer {settings.semesterPriceEtb || 50} ETB to Ambo University</strong>
               {method === "TELEBIRR" ? (
                 <>
-                  <span>Telebirr receiver number: <b>{settings.telebirrPhone?.trim() || "[Admin: Set TELEBIRR_RECEIVER_PHONE in Settings]"}</b></span>
-                  <span>Recipient name: <b>{settings.telebirrRecipientName?.trim() || "Ambo University"}</b></span>
+                  <div className="account-copy-row">
+                    <div>
+                      <small>Telebirr receiver number</small>
+                      <strong>{settings.telebirrPhone?.trim() || "[Admin: Set TELEBIRR_RECEIVER_PHONE in Settings]"}</strong>
+                    </div>
+                    {Boolean(settings.telebirrPhone?.trim()) && !settings.telebirrPhone.startsWith("[") && (
+                      <button
+                        type="button"
+                        className={`copy-pill-btn ${copiedField === "telebirr" ? "copied" : ""}`}
+                        onClick={() => copyToClipboard(settings.telebirrPhone!.trim(), "telebirr")}
+                        title="Copy phone number to clipboard"
+                      >
+                        <Icon name={copiedField === "telebirr" ? "check" : "file"} size={14} />
+                        <span>{copiedField === "telebirr" ? "Copied!" : "Copy"}</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="account-copy-row">
+                    <div>
+                      <small>Recipient name</small>
+                      <span>{settings.telebirrRecipientName?.trim() || "Ambo University"}</span>
+                    </div>
+                  </div>
                 </>
               ) : method === "CBE_BIRR" ? (
                 <>
-                  <span>CBE account number: <b>{settings.cbeAccountNumber?.trim() || "[Admin: Set CBE_ACCOUNT_NUMBER in Settings]"}</b></span>
-                  <span>Account name: <b>{settings.cbeRecipientName?.trim() || "Ambo University"}</b></span>
+                  <div className="account-copy-row">
+                    <div>
+                      <small>CBE account number</small>
+                      <strong>{settings.cbeAccountNumber?.trim() || "[Admin: Set CBE_ACCOUNT_NUMBER in Settings]"}</strong>
+                    </div>
+                    {Boolean(settings.cbeAccountNumber?.trim()) && !settings.cbeAccountNumber.startsWith("[") && (
+                      <button
+                        type="button"
+                        className={`copy-pill-btn ${copiedField === "cbe" ? "copied" : ""}`}
+                        onClick={() => copyToClipboard(settings.cbeAccountNumber!.trim(), "cbe")}
+                        title="Copy account number to clipboard"
+                      >
+                        <Icon name={copiedField === "cbe" ? "check" : "file"} size={14} />
+                        <span>{copiedField === "cbe" ? "Copied!" : "Copy"}</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="account-copy-row">
+                    <div>
+                      <small>Account name</small>
+                      <span>{settings.cbeRecipientName?.trim() || "Ambo University"}</span>
+                    </div>
+                  </div>
                 </>
               ) : (
                 <>
-                  <span>Bank: <b>Commercial Bank of Ethiopia (CBE)</b></span>
-                  <span>Account: <b>{settings.cbeAccountNumber?.trim() || "[Admin: Set CBE_ACCOUNT_NUMBER in Settings]"}</b></span>
+                  <div className="account-copy-row">
+                    <div>
+                      <small>Bank</small>
+                      <span>Commercial Bank of Ethiopia (CBE)</span>
+                    </div>
+                  </div>
+                  <div className="account-copy-row">
+                    <div>
+                      <small>CBE account number</small>
+                      <strong>{settings.cbeAccountNumber?.trim() || "[Admin: Set CBE_ACCOUNT_NUMBER in Settings]"}</strong>
+                    </div>
+                    {Boolean(settings.cbeAccountNumber?.trim()) && !settings.cbeAccountNumber.startsWith("[") && (
+                      <button
+                        type="button"
+                        className={`copy-pill-btn ${copiedField === "cbe_bank" ? "copied" : ""}`}
+                        onClick={() => copyToClipboard(settings.cbeAccountNumber!.trim(), "cbe_bank")}
+                        title="Copy account number to clipboard"
+                      >
+                        <Icon name={copiedField === "cbe_bank" ? "check" : "file"} size={14} />
+                        <span>{copiedField === "cbe_bank" ? "Copied!" : "Copy"}</span>
+                      </button>
+                    )}
+                  </div>
                 </>
               )}
+            </div>
+
+            <div className="mobile-checkout-tip">
+              <span>💡</span>
+              <p>
+                <strong>Quick Mobile Tip:</strong> Tap <b>Copy</b> above, switch to your {method === "TELEBIRR" ? "Telebirr" : "CBE Birr"} app, transfer <b>{settings.semesterPriceEtb || 50} ETB</b>, and take a screenshot of your confirmation receipt to upload below.
+              </p>
             </div>
 
             <Input
@@ -2365,6 +2575,8 @@ function Checkout({
               value={txId}
               onChange={e => setTxId(e.target.value)}
               disabled={!isMethodConfigured}
+              autoCapitalize="characters"
+              autoCorrect="off"
             />
 
             <div
