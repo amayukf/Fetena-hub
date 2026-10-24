@@ -3266,6 +3266,9 @@ function parseDeviceDetails(ua: string | null) {
 }
 
 function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLogout: () => void; go: (s: Screen) => void }) {
+  const [activeTab, setActiveTab] = useState<'id' | 'info' | 'security'>('id');
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -3285,6 +3288,14 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [revokingOthers, setRevokingOthers] = useState(false);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, label: string) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setCopiedField(label);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch {}
+  };
 
   const loadSessions = () => {
     setSessionsLoading(true);
@@ -3384,166 +3395,385 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
     }
   };
 
-  return <>
-    <PageHead eyebrow="ACCOUNT" title="Profile & settings" text="Manage your personal details and active device sessions."/>
-    <div className="settings-grid">
-      <Card className="profile-card">
-        <div className="profile-avatar">{currentUser.fullName.slice(0, 2).toUpperCase()}</div>
-        <Heading level={2}>{currentUser.fullName}</Heading>
-        <p>{currentUser.email || currentUser.phone}</p>
-        <Badge tone="success">VERIFIED {currentUser.role.replace("_", " ")}</Badge>
-        <hr/>
-        <span>ID: {currentUser.studentId || "AMU-STUDENT"}</span>
-        <span>Ambo University</span>
+  const streamTitle = currentUser.stream === "SOC_SCI" ? "Social Science" : "Natural Science";
+  const studentInitials = (currentUser.fullName || "Student")
+    .split(" ")
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase() || "ST";
 
-        {currentUser.role !== "STUDENT" && (
-          <div style={{ marginTop: "16px", width: "100%" }}>
-            <Button className="full" icon="shield" onClick={() => go("admin")}>
-              Open Admin Console
-            </Button>
+  return (
+    <>
+      <PageHead
+        eyebrow="ACADEMIC IDENTITY"
+        title="Student Profile & Pass"
+        text="Your official Ambo University digital credentials, enrolled streams, and active device sessions."
+      />
+
+      {/* Hero Ambo University Digital Student ID Pass */}
+      <div className="student-id-card">
+        <div className="student-id-top">
+          <div className="student-id-uni">
+            <span>🇪🇹</span>
+            <span>AMBO UNIVERSITY · FETENA HUB</span>
           </div>
-        )}
-
-        <div style={{ marginTop: "16px", width: "100%" }}>
-          <Button variant="danger" className="full" icon="logout" onClick={onLogout}>
-            Log Out of Session
-          </Button>
+          <div className="student-id-status">
+            <span className="pulse-dot" />
+            <span>VERIFIED {currentUser.role.replace("_", " ")}</span>
+          </div>
         </div>
-      </Card>
-      <div>
-        <Card className="form-card">
-          <Heading level={2}>Personal information</Heading>
-          <div className="form-grid">
-            <Input label="Full name" placeholder={currentUser.fullName} disabled/>
-            <Input label="Phone number" placeholder={currentUser.phone || "Not set"} disabled/>
+
+        <div className="student-id-hero">
+          <div className="student-id-avatar-wrap">
+            <div className="student-id-avatar">{studentInitials}</div>
+            <div className="student-id-verified-tick" title="Verified University Student">✓</div>
           </div>
-          <Input label="Email address" placeholder={currentUser.email || "Not set"} disabled/>
-          <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0 0" }}>
-            To update university records or student ID, please visit the Ambo University Registrar.
-          </p>
-        </Card>
-
-        <Card className="form-card" style={{ marginTop: "16px" }}>
-          <Heading level={2}>Change Password</Heading>
-          {pwdMsg && (
-            <div className={`alert ${pwdMsg.tone}`} style={{ margin: "12px 0" }}>
-              <span>{pwdMsg.text}</span>
-            </div>
-          )}
-          <form onSubmit={handleChangePassword} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            <Input
-              label={currentUser.googleId ? "Current password (optional if signed in with Google)" : "Current password"}
-              placeholder="Enter your current password"
-              type="password"
-              value={currentPassword}
-              onChange={e => setCurrentPassword(e.target.value)}
-              required={!currentUser.googleId}
-            />
-            <Input
-              label="New password"
-              placeholder="At least 8 characters"
-              type="password"
-              value={newPassword}
-              onChange={e => setNewPassword(e.target.value)}
-              required
-            />
-            <Input
-              label="Confirm new password"
-              placeholder="Re-enter new password"
-              type="password"
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
-              required
-            />
-            <Button type="submit" disabled={pwdLoading}>
-              {pwdLoading ? "Saving..." : "Update Password"}
-            </Button>
-          </form>
-        </Card>
-
-        <Card className="form-card" style={{ marginTop: "16px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "6px" }}>
-            <Heading level={2}>Security & device sessions</Heading>
-            <Badge tone={sessions.length >= 2 ? "warning" : "success"}>
-              {sessions.length} / 2 SLOTS USED
-            </Badge>
-          </div>
-          <p style={{ fontSize: "0.82rem", color: "var(--muted)", margin: "0 0 12px" }}>
-            Your account is actively enforced with a maximum of 2 simultaneous device sessions to protect exam materials.
-          </p>
-
-          {sessionNotice && (
-            <div className="alert success" style={{ margin: "8px 0 12px" }}>
-              <span>{sessionNotice}</span>
-            </div>
-          )}
-
-          {sessionsLoading ? (
-            <div style={{ padding: "16px", textAlign: "center", color: "var(--muted)" }}>
-              <Icon name="clock" size={22} />
-              <p style={{ marginTop: "6px", fontSize: "0.82rem" }}>Verifying active device sessions...</p>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              {sessions.map((sess, idx) => {
-                const info = parseDeviceDetails(sess.userAgent);
-                const isCurrent = sess.isCurrent || (idx === 0 && !sessions.some(s => s.isCurrent));
-                const dateStr = new Date(sess.createdAt).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                });
-                return (
-                  <div key={sess.id || idx} className="device-row">
-                    <div className="device-row-main">
-                      <div className="device-avatar-icon">
-                        <Icon name={isCurrent ? "user" : "shield"} size={18} />
-                      </div>
-                      <div className="device-details">
-                        <strong>{info.name}</strong>
-                        <small>
-                          {isCurrent ? "Active now (This browser)" : `Signed in ${dateStr}`} · {sess.ipAddress ? `IP ${sess.ipAddress.replace("::ffff:", "")}` : "Ethiopia"}
-                        </small>
-                      </div>
-                    </div>
-                    <div>
-                      {isCurrent ? (
-                        <Badge tone="success">THIS DEVICE</Badge>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          style={{ color: "#b91c1c", fontSize: "0.78rem", minHeight: "34px", padding: "4px 10px" }}
-                          disabled={revokingId === sess.id}
-                          onClick={() => handleRevokeSession(sess.id)}
-                        >
-                          {revokingId === sess.id ? "Signing out..." : "Sign Out"}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {sessions.length > 1 && (
-                <div style={{ marginTop: "4px", display: "flex", justifyContent: "flex-end" }}>
-                  <Button
-                    variant="ghost"
-                    style={{ color: "#b91c1c", fontSize: "0.80rem" }}
-                    disabled={revokingOthers}
-                    onClick={handleRevokeOthers}
-                  >
-                    <Icon name="logout" size={14} />
-                    <span>{revokingOthers ? "Signing out..." : "Sign Out All Other Devices"}</span>
-                  </Button>
-                </div>
+          <div className="student-id-info">
+            <h2 className="student-id-name">{currentUser.fullName}</h2>
+            <div className="student-id-contact">
+              <span>{currentUser.email || currentUser.phone || "Enrolled Student"}</span>
+              {currentUser.email && (
+                <button
+                  type="button"
+                  style={{
+                    background: "rgba(255,255,255,0.18)",
+                    border: "none",
+                    borderRadius: "4px",
+                    color: "#ffffff",
+                    fontSize: "0.68rem",
+                    padding: "1px 6px",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => copyToClipboard(currentUser.email || "", "email")}
+                >
+                  {copiedField === "email" ? "Copied!" : "Copy"}
+                </button>
               )}
             </div>
-          )}
-        </Card>
+            <div className="student-id-tags">
+              <span className="student-id-tag">
+                {currentUser.stream === "SOC_SCI" ? "📊" : "🔬"} {streamTitle}
+              </span>
+              <span className="student-id-tag">
+                🎓 Year {currentUser.currentYear || 1} Freshman
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="student-id-meta-grid">
+          <div className="student-id-meta-item">
+            <span className="student-id-meta-label">Student ID</span>
+            <span className="student-id-meta-value">{currentUser.studentId || "AMU-STUDENT"}</span>
+          </div>
+          <div className="student-id-meta-item">
+            <span className="student-id-meta-label">Campus</span>
+            <span className="student-id-meta-value" style={{ fontFamily: "inherit", fontSize: "0.76rem" }}>Main / Awaro</span>
+          </div>
+          <div className="student-id-meta-item">
+            <span className="student-id-meta-label">Standing</span>
+            <span className="student-id-meta-value" style={{ color: "#34d399", fontFamily: "inherit" }}>● Good Standing</span>
+          </div>
+        </div>
+
+        <div className="student-id-barcode-row">
+          <span>||| | ||||| ||| || |||||| | |||</span>
+          <span>ETH-AMU-2026-FTN#{currentUser.userId.slice(0, 6)}</span>
+        </div>
       </div>
-    </div>
-  </>;
+
+      {/* Quick Status Pill Counters */}
+      <div className="profile-stats-row">
+        <div className="profile-stat-box">
+          <span className="stat-label">Curriculum</span>
+          <span className="stat-val">{streamTitle}</span>
+        </div>
+        <div className="profile-stat-box">
+          <span className="stat-label">Device Slots</span>
+          <span className="stat-val" style={{ color: sessions.length >= 2 ? "#b45309" : "#047857" }}>
+            {sessions.length} / 2 Active
+          </span>
+        </div>
+        <div className="profile-stat-box">
+          <span className="stat-label">Security</span>
+          <span className="stat-val" style={{ color: "#047857" }}>
+            {currentUser.googleId ? "Google 2FA" : "Password"}
+          </span>
+        </div>
+      </div>
+
+      {/* Segmented Sub-Navigation for Clean Mobile Organization */}
+      <div className="profile-segmented-nav">
+        <button
+          type="button"
+          className={activeTab === 'id' ? 'active' : ''}
+          onClick={() => setActiveTab('id')}
+        >
+          <Icon name="card" size={16} />
+          <span>Overview</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'info' ? 'active' : ''}
+          onClick={() => setActiveTab('info')}
+        >
+          <Icon name="user" size={16} />
+          <span>Academic Info</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'security' ? 'active' : ''}
+          onClick={() => setActiveTab('security')}
+        >
+          <Icon name="shield" size={16} />
+          <span>Devices & Password</span>
+        </button>
+      </div>
+
+      {/* Tab 1: Overview & Quick Actions */}
+      {activeTab === 'id' && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <Card className="form-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+              <Heading level={2}>Academic Summary</Heading>
+              <Badge tone="success">FRESHMAN 2026</Badge>
+            </div>
+            <p style={{ fontSize: "0.86rem", color: "var(--muted)", margin: "0 0 14px" }}>
+              You are officially registered in the Ambo University Freshman exam vault. All course access and verified answer keys reflect your enrollment stream.
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div className="info-field-row">
+                <span className="info-field-label">Primary Stream</span>
+                <span className="info-field-val">
+                  {currentUser.stream === "SOC_SCI" ? "Social Science Curriculum" : "Natural Science Curriculum"}
+                </span>
+              </div>
+              <div className="info-field-row">
+                <span className="info-field-label">Institution</span>
+                <span className="info-field-val">Ambo University (Ethiopia)</span>
+              </div>
+              <div className="info-field-row">
+                <span className="info-field-label">Student Identification</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span className="info-field-val" style={{ fontFamily: "monospace" }}>
+                    {currentUser.studentId || "AMU-STUDENT"}
+                  </span>
+                  <button
+                    type="button"
+                    style={{ background: "#edf1f0", border: "none", borderRadius: "4px", padding: "2px 8px", fontSize: "0.74rem", cursor: "pointer" }}
+                    onClick={() => copyToClipboard(currentUser.studentId || "AMU-STUDENT", "studentId")}
+                  >
+                    {copiedField === "studentId" ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {currentUser.role !== "STUDENT" && (
+              <div style={{ marginTop: "16px", padding: "14px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+                  <div>
+                    <strong style={{ color: "#166534", fontSize: "0.88rem" }}>Staff Admin Access</strong>
+                    <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "#15803d" }}>
+                      You hold verified {currentUser.role.replace("_", " ")} permissions.
+                    </p>
+                  </div>
+                  <Button icon="shield" onClick={() => go("admin")}>
+                    Open Admin Console
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* Clean Account Session / Sign Out Card (Demoted from dominant red block to clean exit) */}
+          <Card className="form-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+              <div>
+                <strong style={{ fontSize: "0.92rem", color: "var(--ink)" }}>Session Control</strong>
+                <p style={{ margin: "2px 0 0", fontSize: "0.80rem", color: "var(--muted)" }}>
+                  Signed in on this browser as {currentUser.email || currentUser.phone || currentUser.fullName}
+                </p>
+              </div>
+              <Button variant="danger" icon="logout" onClick={onLogout}>
+                Log Out of Session
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Tab 2: Detailed Academic Info */}
+      {activeTab === 'info' && (
+        <Card className="form-card">
+          <Heading level={2}>Personal & Registrar Information</Heading>
+          <p style={{ fontSize: "0.84rem", color: "var(--muted)", margin: "0 0 14px" }}>
+            These details are tied to your institutional account and used for watermarking exam materials and verifying payment slips.
+          </p>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <Input label="Full name" placeholder={currentUser.fullName} disabled />
+            <div className="form-grid">
+              <Input label="Email address" placeholder={currentUser.email || "Not set"} disabled />
+              <Input label="Phone number" placeholder={currentUser.phone || "Not set"} disabled />
+            </div>
+            <div className="form-grid">
+              <Input label="University Student ID" placeholder={currentUser.studentId || "AMU-STUDENT"} disabled />
+              <Input label="Faculty / Program" placeholder={streamTitle + " Division"} disabled />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", background: "#f8faf9", padding: "12px 14px", borderRadius: "10px", marginTop: "12px", border: "1px solid var(--line)" }}>
+            <Icon name="help" size={18} />
+            <p style={{ fontSize: "0.78rem", color: "var(--muted)", margin: 0, lineHeight: 1.5 }}>
+              To update your university name or transfer your registered stream, please contact the Ambo University Academic Registrar or submit a support inquiry through Fetena Hub Help.
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {/* Tab 3: Security & Devices */}
+      {activeTab === 'security' && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {/* Active Device Sessions */}
+          <Card className="form-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "4px" }}>
+              <Heading level={2}>Active Device Sessions</Heading>
+              <Badge tone={sessions.length >= 2 ? "warning" : "success"}>
+                {sessions.length} / 2 SLOTS USED
+              </Badge>
+            </div>
+            <p style={{ fontSize: "0.82rem", color: "var(--muted)", margin: "0 0 12px" }}>
+              To protect past exam archives and copyright, each account is strictly enforced with a maximum of 2 simultaneous device sessions.
+            </p>
+
+            {sessionNotice && (
+              <div className="alert success" style={{ margin: "8px 0 12px" }}>
+                <span>{sessionNotice}</span>
+              </div>
+            )}
+
+            {sessionsLoading ? (
+              <div style={{ padding: "20px", textAlign: "center", color: "var(--muted)" }}>
+                <Icon name="clock" size={24} />
+                <p style={{ marginTop: "8px", fontSize: "0.84rem" }}>Verifying active device sessions...</p>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {sessions.map((sess, idx) => {
+                  const info = parseDeviceDetails(sess.userAgent);
+                  const isCurrent = sess.isCurrent || (idx === 0 && !sessions.some((s) => s.isCurrent));
+                  const dateStr = new Date(sess.createdAt).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  });
+                  return (
+                    <div key={sess.id || idx} className="device-row">
+                      <div className="device-row-main">
+                        <div className="device-avatar-icon">
+                          <Icon name={info.isMobile ? "user" : "shield"} size={18} />
+                        </div>
+                        <div className="device-details">
+                          <strong>{info.name}</strong>
+                          <small>
+                            {isCurrent ? "Active now (This phone/browser)" : `Signed in ${dateStr}`} · {sess.ipAddress ? `IP ${sess.ipAddress.replace("::ffff:", "")}` : "Ethiopia"}
+                          </small>
+                        </div>
+                      </div>
+                      <div>
+                        {isCurrent ? (
+                          <Badge tone="success">THIS DEVICE</Badge>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            style={{ color: "#b91c1c", fontSize: "0.78rem", minHeight: "34px", padding: "4px 10px" }}
+                            disabled={revokingId === sess.id}
+                            onClick={() => handleRevokeSession(sess.id)}
+                          >
+                            {revokingId === sess.id ? "Signing out..." : "Sign Out"}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {sessions.length > 1 && (
+                  <div style={{ marginTop: "6px", display: "flex", justifyContent: "flex-end" }}>
+                    <Button
+                      variant="ghost"
+                      style={{ color: "#b91c1c", fontSize: "0.80rem" }}
+                      disabled={revokingOthers}
+                      onClick={handleRevokeOthers}
+                    >
+                      <Icon name="logout" size={14} />
+                      <span>{revokingOthers ? "Signing out..." : "Sign Out All Other Devices"}</span>
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {/* Change Password */}
+          <Card className="form-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+              <Heading level={2}>Account Password</Heading>
+              {currentUser.googleId && <Badge tone="accent">GOOGLE SIGN-IN LINKED</Badge>}
+            </div>
+            <p style={{ fontSize: "0.82rem", color: "var(--muted)", margin: "0 0 10px" }}>
+              {currentUser.googleId
+                ? "You are signed in with Google OAuth. You can optionally set a password to also log in with your phone number."
+                : "Choose a secure password of at least 8 characters to safeguard your account."}
+            </p>
+
+            {pwdMsg && (
+              <div className={`alert ${pwdMsg.tone}`} style={{ margin: "10px 0" }}>
+                <span>{pwdMsg.text}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangePassword} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <Input
+                label={currentUser.googleId ? "Current password (optional if using Google)" : "Current password"}
+                placeholder="Enter current password"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required={!currentUser.googleId}
+              />
+              <div className="form-grid">
+                <Input
+                  label="New password"
+                  placeholder="At least 8 characters"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                />
+                <Input
+                  label="Confirm new password"
+                  placeholder="Re-enter new password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <Button type="submit" disabled={pwdLoading} style={{ alignSelf: "flex-start", marginTop: "4px" }}>
+                {pwdLoading ? "Saving..." : "Update Password"}
+              </Button>
+            </form>
+          </Card>
+        </div>
+      )}
+    </>
+  );
 }
 
 function Notifications({ notifications }: { notifications: StoreNotification[] }) {
