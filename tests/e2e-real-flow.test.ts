@@ -312,8 +312,8 @@ describe('PART 6: Real End-to-End Main Lifecycle Flow', () => {
     expect(pageRes.status).toBe(403);
   });
 
-  it('Step 7: Direct file URL / stream access is permanently disabled', async () => {
+  it('Step 7: Direct file URL / stream access is permanently removed (404)', async () => {
     const directStreamRes = await callApi('GET', `/api/papers/${paperPhys.id}/stream`);
-    expect(directStreamRes.status).toBe(410);
+    expect(directStreamRes.status).toBe(404);
   });
 });

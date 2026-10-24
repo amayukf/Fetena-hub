@@ -395,7 +395,7 @@ describe('P0 Critical Fixes Verification', () => {
     expect(outOfRangeRes.status).toBe(416);
 
     const streamRes = await callApi('GET', `/api/papers/${paper.id}/stream?token=old-ticket`);
-    expect(streamRes.status).toBe(410);
+    expect(streamRes.status).toBe(404);
 
     // Clean up with soft delete
     await prisma.examPaper.update({

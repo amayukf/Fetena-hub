@@ -379,8 +379,10 @@ export const api = {
     });
   },
 
-  async getPaperSolution(paperId: string) {
-    return request<any>(`/api/papers/${encodeURIComponent(paperId)}/solution`);
+  async getPaperSolution(paperId: string, actorId?: string, actorRole?: string) {
+    return request<any>(`/api/papers/${encodeURIComponent(paperId)}/solution`, {
+      headers: buildHeaders(actorId, actorRole),
+    });
   },
 
   async updatePaperSolution(paperId: string, solutionData: any, actorId?: string, actorRole?: string) {

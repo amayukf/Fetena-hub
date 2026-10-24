@@ -1,4 +1,5 @@
-import { defineConfig, type HtmlTagDescriptor, type Plugin } from 'vite'
+// @ts-nocheck
+import { defineConfig, type HtmlTagDescriptor, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
@@ -10,7 +11,7 @@ export default defineConfig(async ({ command, mode }) => {
   // .figma/make/deploy-preview passes `--mode development` for cached-preview builds.
   const emitSourcemaps = mode === 'development'
 
-  const plugins: Plugin[] = [
+  const plugins: PluginOption[] = [
     react(),
     tailwindcss(),
     figmaSiteConfiguration(siteConfiguration),

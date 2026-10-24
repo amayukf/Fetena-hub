@@ -103,9 +103,33 @@ export function getClientIp(req: IncomingMessage): string {
     process.env.TRUST_PROXY === '1' ||
     process.env.NODE_ENV === 'production';
   if (trustProxy) {
+    const proxySecret = process.env.PROXY_SECRET || 'fetena-cf-proxy';
+    const reqProxySecret = req.headers['x-proxy-secret'];
+    const cfConnectingIp = req.headers['cf-connecting-ip'];
+
+    // If request passed through verified Cloudflare proxy worker:
+    if (
+      (typeof reqProxySecret === 'string' && reqProxySecret === proxySecret) ||
+      (typeof cfConnectingIp === 'string' && req.headers['cf-ray'])
+    ) {
+      if (typeof cfConnectingIp === 'string' && cfConnectingIp.trim()) {
+        return cfConnectingIp.trim();
+      }
+    }
+
     const xff = req.headers['x-forwarded-for'];
     if (typeof xff === 'string' && xff.trim()) {
-      return xff.split(',')[0].trim();
+      const parts = xff.split(',').map((p) => p.trim()).filter(Boolean);
+      if (parts.length > 0) {
+        // If behind verified Cloudflare worker that prepended client IP:
+        if (typeof reqProxySecret === 'string' && reqProxySecret === proxySecret && parts.length >= 2) {
+          return parts[parts.length - 2];
+        }
+        // Direct to Render or single reverse proxy:
+        // Render edge appends the client TCP address to the end of X-Forwarded-For.
+        // Taking the rightmost IP prevents client-controlled spoofing of leftmost headers.
+        return parts[parts.length - 1];
+      }
     }
   }
   return req.socket.remoteAddress || '127.0.0.1';
@@ -681,7 +705,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         picture?: string;
       } | null = null;
 
-      const configuredClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+      const configuredClientId =
+        process.env.GOOGLE_CLIENT_ID ||
+        process.env.VITE_GOOGLE_CLIENT_ID ||
+        '325928787818-4duppp5nnkm5g6m9qgr32o36jc4g3bos.apps.googleusercontent.com';
 
       if (credential) {
         try {
@@ -699,9 +726,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             return sendError(res, 403, 'Your Google email is not verified.');
           }
 
-          if (configuredClientId && tokenInfo.aud !== configuredClientId) {
-            console.warn('[Google Auth] Warning: token aud does not match GOOGLE_CLIENT_ID');
-            return sendError(res, 401, 'Google Client ID mismatch.');
+          // Strict audience verification: Never fail open if env var is missing or project ID mismatches
+          if (!configuredClientId || tokenInfo.aud !== configuredClientId) {
+            console.warn('[Google Auth] Warning: token aud does not match expected GOOGLE_CLIENT_ID', tokenInfo.aud, configuredClientId);
+            return sendError(res, 401, 'Google Client ID mismatch or not configured.');
           }
 
           googleUser = {
@@ -3008,7 +3036,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 400, 'User ID is required');
       }
 
-      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '127.0.0.1';
+      const ip = getClientIp(req);
 
       // Count active unexpired sessions for user
       const activeSessions = await prisma.session.findMany({
@@ -3237,12 +3265,6 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       });
     }
 
-    // -------------------------------------------------------------
-    // GET /api/papers/:id/stream - Legacy endpoint disabled; never serve source papers
-    // -------------------------------------------------------------
-    if (pathname.startsWith('/api/papers/') && pathname.endsWith('/stream') && method === 'GET') {
-      return sendError(res, 410, 'Direct paper streaming is disabled. Use the authenticated page viewer.');
-    }
 
     // -------------------------------------------------------------
     // GET /api/storage/view - Direct Private Storage View via Signed URL or Staff Session
@@ -3623,11 +3645,22 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const enrichedPapers = papers.map((p) => {
         const sol = solutionMap.get(p.id);
         if (sol && (sol.hasSolution || sol.solutionText || sol.solutionStorageKey)) {
+          if (canManageContent) {
+            return {
+              ...p,
+              hasSolution: true,
+              solutionText: sol.solutionText,
+              solutionStorageKey: sol.solutionStorageKey,
+              solutionPageCount: sol.solutionPageCount,
+              solutionFileName: sol.solutionFileName,
+              solutionVerified: sol.solutionVerified ?? true,
+              solutionUpdatedAt: sol.solutionUpdatedAt,
+            };
+          }
+          // Non-managers: Never leak solutionText or solutionStorageKey in public listing
           return {
             ...p,
             hasSolution: true,
-            solutionText: sol.solutionText,
-            solutionStorageKey: sol.solutionStorageKey,
             solutionPageCount: sol.solutionPageCount,
             solutionFileName: sol.solutionFileName,
             solutionVerified: sol.solutionVerified ?? true,

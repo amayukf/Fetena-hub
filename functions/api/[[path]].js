@@ -8,7 +8,11 @@ export async function onRequest(context) {
   const clientIp = context.request.headers.get('cf-connecting-ip');
   if (clientIp) {
     headers.set('x-forwarded-for', clientIp);
+    headers.set('cf-connecting-ip', clientIp);
   }
+
+  const proxySecret = context.env.PROXY_SECRET || 'fetena-cf-proxy';
+  headers.set('x-proxy-secret', proxySecret);
 
   const options = {
     method: context.request.method,
