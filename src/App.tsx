@@ -101,11 +101,12 @@ export function Heading({ level = 2, children, className = "", style }: { level?
   return <Tag style={style} className={`heading heading-${level} ${className}`}>{children}</Tag>;
 }
 
-export function Input({ label, placeholder, type = "text", value, onChange, disabled, autoCapitalize, autoCorrect, inputMode }: {
+export function Input({ label, placeholder, type = "text", value, onChange, disabled, autoCapitalize, autoCorrect, inputMode, required }: {
   label: string; placeholder: string; type?: string; value?: string; onChange?: (e: ChangeEvent<HTMLInputElement>) => void; disabled?: boolean;
   autoCapitalize?: string; autoCorrect?: string; inputMode?: "search" | "text" | "email" | "tel" | "url" | "numeric" | "none" | "decimal";
+  required?: boolean;
 }) {
-  return <label className="field"><span>{label}</span><input type={type} placeholder={placeholder} value={value} onChange={onChange} disabled={disabled} autoCapitalize={autoCapitalize} autoCorrect={autoCorrect} inputMode={inputMode}/></label>;
+  return <label className="field"><span>{label}</span><input type={type} placeholder={placeholder} value={value} onChange={onChange} disabled={disabled} autoCapitalize={autoCapitalize} autoCorrect={autoCorrect} inputMode={inputMode} required={required}/></label>;
 }
 
 export function Select({ label, children, value, onChange }: { label: string; children: ReactNode; value?: string; onChange?: (e: ChangeEvent<HTMLSelectElement>) => void }) {
@@ -1769,6 +1770,17 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
   const [zoom, setZoom] = useState(100);
   const [activeTab, setActiveTab] = useState<'questions' | 'solution'>('questions');
   const [solutionCopied, setSolutionCopied] = useState(false);
+  const [solutionData, setSolutionData] = useState<{
+    hasSolution?: boolean;
+    solutionText?: string;
+    solutionStorageKey?: string;
+    solutionFileName?: string;
+    solutionPageCount?: number;
+    solutionVerified?: boolean;
+    solutionUpdatedAt?: string;
+  } | null>(null);
+  const [solutionLoading, setSolutionLoading] = useState(false);
+  const [solutionError, setSolutionError] = useState<string | null>(null);
   const [accessState, setAccessState] = useState<{ allowed: boolean; reason?: string; pageCount?: number } | null>(null);
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [pageLoading, setPageLoading] = useState(true);
@@ -1787,6 +1799,8 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
     let current = true;
     setCheckingAccess(true);
     setAccessState(null);
+    setSolutionData(null);
+    setSolutionError(null);
     setPage(1);
     setActiveTab('questions');
     if (!paper) {
@@ -1808,6 +1822,29 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
       });
     return () => { current = false; };
   }, [paper?.id, currentUser.userId]);
+
+  // Secure on-demand solution fetching with entitlement verification
+  useEffect(() => {
+    if (activeTab !== 'solution' || !paper?.id) return;
+    if (solutionData && solutionData.hasSolution !== undefined) return;
+    let current = true;
+    setSolutionLoading(true);
+    setSolutionError(null);
+    api.getPaperSolution(paper.id, currentUser.userId, currentUser.role)
+      .then((res) => {
+        if (current) {
+          setSolutionData(res);
+          setSolutionLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (current) {
+          setSolutionError(err.message || 'Authentication and course enrollment required to view verified solutions.');
+          setSolutionLoading(false);
+        }
+      });
+    return () => { current = false; };
+  }, [activeTab, paper?.id, currentUser.userId, currentUser.role, solutionData]);
 
   useEffect(() => {
     setPageLoading(true);
@@ -2006,35 +2043,61 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
               position: "relative",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid var(--line)", paddingBottom: "16px", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
-              <div>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#dcfce7", color: "#166534", padding: "3px 10px", borderRadius: "100px", fontSize: "0.78rem", fontWeight: 700 }}>
-                  <Icon name="check" size={14} /> VERIFIED EXAM SOLUTION KEY
-                </span>
-                <Heading level={2} style={{ marginTop: "8px", color: "var(--ink)" }}>
-                  {paper ? `${paper.courseCode} · Answer Key & Explanations` : "Exam Solutions"}
-                </Heading>
-                <small style={{ color: "var(--muted)" }}>
-                  {paper?.title} · Ambo University Freshman Preparation Archive
-                </small>
+            {(() => {
+              const effectiveSolutionText = solutionData?.solutionText || paper?.solutionText;
+              const effectiveSolutionStorageKey = solutionData?.solutionStorageKey || paper?.solutionStorageKey;
+              const effectiveSolutionFileName = solutionData?.solutionFileName || paper?.solutionFileName;
+
+              return (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid var(--line)", paddingBottom: "16px", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+                  <div>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#dcfce7", color: "#166534", padding: "3px 10px", borderRadius: "100px", fontSize: "0.78rem", fontWeight: 700 }}>
+                      <Icon name="check" size={14} /> VERIFIED EXAM SOLUTION KEY
+                    </span>
+                    <Heading level={2} style={{ marginTop: "8px", color: "var(--ink)" }}>
+                      {paper ? `${paper.courseCode} · Answer Key & Explanations` : "Exam Solutions"}
+                    </Heading>
+                    <small style={{ color: "var(--muted)" }}>
+                      {paper?.title} · Ambo University Freshman Preparation Archive
+                    </small>
+                  </div>
+
+                  {effectiveSolutionText && (
+                    <Button
+                      variant="secondary"
+                      style={{ fontSize: "0.8rem", minHeight: "34px", padding: "0 12px" }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(effectiveSolutionText || '');
+                        setSolutionCopied(true);
+                        setTimeout(() => setSolutionCopied(false), 2000);
+                      }}
+                    >
+                      {solutionCopied ? "✓ Copied to clipboard" : "📋 Copy solution key"}
+                    </Button>
+                  )}
+                </div>
+              );
+            })()}
+
+            {solutionLoading ? (
+              <div style={{ textAlign: "center", padding: "60px 20px" }}>
+                <div className="spinner" style={{ margin: "0 auto 16px" }} />
+                <p style={{ color: "var(--muted)" }}>Verifying entitlement & loading verified solution...</p>
               </div>
-
-              {paper?.solutionText && (
-                <Button
-                  variant="secondary"
-                  style={{ fontSize: "0.8rem", minHeight: "34px", padding: "0 12px" }}
-                  onClick={() => {
-                    navigator.clipboard.writeText(paper.solutionText || '');
-                    setSolutionCopied(true);
-                    setTimeout(() => setSolutionCopied(false), 2000);
-                  }}
-                >
-                  {solutionCopied ? "✓ Copied to clipboard" : "📋 Copy solution key"}
-                </Button>
-              )}
-            </div>
-
-            {paper?.solutionText ? (
+            ) : solutionError ? (
+              <div style={{ textAlign: "center", padding: "48px 20px" }}>
+                <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>🔒</div>
+                <h3 style={{ color: "var(--ink)", marginBottom: "8px" }}>Verified Solution Access Locked</h3>
+                <p style={{ color: "var(--muted)", maxWidth: "460px", margin: "0 auto 20px", fontSize: "0.9rem" }}>
+                  {solutionError}
+                </p>
+                {!currentUser || !currentUser.userId ? (
+                  <Button onClick={() => go("login")}>Sign in to Access Solutions</Button>
+                ) : (
+                  <Button onClick={() => go("checkout")}>Unlock Course Access</Button>
+                )}
+              </div>
+            ) : (solutionData?.solutionText || paper?.solutionText) ? (
               <div
                 style={{
                   fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
@@ -2048,13 +2111,13 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
                   color: "#0f172a",
                 }}
               >
-                {paper.solutionText}
+                {solutionData?.solutionText || paper?.solutionText}
               </div>
-            ) : paper?.solutionStorageKey ? (
+            ) : (solutionData?.solutionStorageKey || paper?.solutionStorageKey) ? (
               <div style={{ textAlign: "center", padding: "48px 20px" }}>
                 <Icon name="file" size={48} />
                 <h3 style={{ marginTop: "16px", color: "var(--ink)" }}>
-                  Solution Document: {paper.solutionFileName || "Verified Answer Sheet"}
+                  Solution Document: {solutionData?.solutionFileName || paper?.solutionFileName || "Verified Answer Sheet"}
                 </h3>
                 <p style={{ color: "var(--muted)", maxWidth: "480px", margin: "8px auto 20px" }}>
                   An official answer key document is attached to this exam paper.

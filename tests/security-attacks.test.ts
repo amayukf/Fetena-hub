@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Role, PaymentStatus, PaperStatus, ExamType, AuditRiskLevel, ProgramType, PaymentMethod } from '@prisma/client';
-import { handleApiRequest, prisma, checkRateLimit } from '../server/apiHandler';
+import { handleApiRequest, prisma, checkRateLimit, getClientIp } from '../server/apiHandler';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
@@ -243,20 +243,19 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
       expect(res.body.allowed).toBe(false);
     });
 
-    it('1.3: Legacy direct streaming endpoint never returns a paper file', async () => {
+    it('1.3: Direct raw streaming endpoint is completely deleted (404)', async () => {
       const noTokenRes = await callApi('GET', `/api/papers/${paperPhysPublished.id}/stream`);
-      expect(noTokenRes.status).toBe(410);
-      expect(noTokenRes.body.error).toContain('Direct paper streaming is disabled');
+      expect(noTokenRes.status).toBe(404);
 
       const legacyTicketRes = await callApi('GET', `/api/papers/${paperPhysPublished.id}/stream?token=legacy&expires=${Date.now() + 60000}`);
-      expect(legacyTicketRes.status).toBe(410);
+      expect(legacyTicketRes.status).toBe(404);
     });
 
-    it('1.4: Published and draft papers cannot be obtained through the legacy stream route', async () => {
+    it('1.4: Published and draft papers cannot be obtained through deleted stream route (404)', async () => {
       const publishedRes = await callApi('GET', `/api/papers/${paperPhysPublished.id}/stream`);
       const draftRes = await callApi('GET', `/api/papers/${paperDraft.id}/stream?token=legacy`);
-      expect(publishedRes.status).toBe(410);
-      expect(draftRes.status).toBe(410);
+      expect(publishedRes.status).toBe(404);
+      expect(draftRes.status).toBe(404);
     });
 
     it('1.5: Direct storage key access without signed URL is rejected (403)', async () => {
@@ -524,6 +523,127 @@ describe('PART 4: Security Review & Adversarial Attack Regression Suite', () => 
       expect(header(res, 'referrer-policy')).toBe('strict-origin-when-cross-origin');
       expect(header(res, 'strict-transport-security')).toContain('max-age=31536000');
       expect(header(res, 'content-security-policy')).toContain("default-src 'self'");
+    });
+  });
+
+  // -------------------------------------------------------------
+  // ATTACK VECTOR 9: Solution Leak Prevention, Google OAuth Audience Lock, and IP Spoofing
+  // -------------------------------------------------------------
+  describe('Attack 9: Solution Leak Prevention, Google Audience Lock, and Proxy IP Derivation', () => {
+    it('9.1: getClientIp takes rightmost IP when hitting Render directly to prevent leftmost header spoofing', () => {
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        const fakeReq: any = {
+          headers: {
+            'x-forwarded-for': '203.0.113.195, 198.51.100.17, 197.156.102.55',
+          },
+          socket: { remoteAddress: '10.0.0.1' },
+        };
+        // Attacker spoofed 203.0.113.195, Render edge appended 197.156.102.55
+        const clientIp = getClientIp(fakeReq);
+        expect(clientIp).toBe('197.156.102.55');
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    it('9.2: getClientIp securely trusts verified Cloudflare proxy worker with secret', () => {
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        const fakeReq: any = {
+          headers: {
+            'x-proxy-secret': 'fetena-cf-proxy',
+            'cf-connecting-ip': '197.156.88.99',
+            'x-forwarded-for': '197.156.88.99, 10.0.0.2',
+          },
+          socket: { remoteAddress: '10.0.0.2' },
+        };
+        const clientIp = getClientIp(fakeReq);
+        expect(clientIp).toBe('197.156.88.99');
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    it('9.3: GET /api/papers never leaks solutionText or solutionStorageKey to unauthorized users', async () => {
+      // Attach a solution to paperPhysPublished
+      const settingKey = `paper_solution:${paperPhysPublished.id}`;
+      await prisma.systemSetting.upsert({
+        where: { key: settingKey },
+        update: {
+          value: JSON.stringify({
+            hasSolution: true,
+            solutionText: 'TOP SECRET ANSWER: Question 1 is Choice C, Question 2 is Choice A',
+            solutionStorageKey: 'solutions/physics_2015_answers.pdf',
+            solutionPageCount: 3,
+            solutionFileName: 'physics_2015_answers.pdf',
+            solutionVerified: true,
+          }),
+        },
+        create: {
+          key: settingKey,
+          value: JSON.stringify({
+            hasSolution: true,
+            solutionText: 'TOP SECRET ANSWER: Question 1 is Choice C, Question 2 is Choice A',
+            solutionStorageKey: 'solutions/physics_2015_answers.pdf',
+            solutionPageCount: 3,
+            solutionFileName: 'physics_2015_answers.pdf',
+            solutionVerified: true,
+          }),
+        },
+      });
+
+      // Anonymous public user fetches papers
+      const anonRes = await callApi('GET', `/api/papers?courseId=${coursePhysNat.id}`);
+      expect(anonRes.status).toBe(200);
+      const anonPaper = anonRes.body.find((p: any) => p.id === paperPhysPublished.id);
+      expect(anonPaper).toBeDefined();
+      expect(anonPaper.hasSolution).toBe(true);
+      expect(anonPaper.solutionPageCount).toBe(3);
+      expect(anonPaper.solutionVerified).toBe(true);
+      // STRICT: Must NOT leak full solution text or storage key to public list!
+      expect(anonPaper.solutionText).toBeUndefined();
+      expect(anonPaper.solutionStorageKey).toBeUndefined();
+
+      // Student user fetches papers
+      const studentRes = await callApi('GET', `/api/papers?courseId=${coursePhysNat.id}`, undefined, {
+        'x-actor-id': studentB.id,
+      });
+      expect(studentRes.status).toBe(200);
+      const studentPaper = studentRes.body.find((p: any) => p.id === paperPhysPublished.id);
+      expect(studentPaper.solutionText).toBeUndefined();
+      expect(studentPaper.solutionStorageKey).toBeUndefined();
+
+      // Admin user fetches papers - manager is authorized to see solution details
+      const adminRes = await callApi('GET', `/api/papers?courseId=${coursePhysNat.id}`, undefined, {
+        'x-actor-id': adminUser.id,
+      });
+      expect(adminRes.status).toBe(200);
+      const adminPaper = adminRes.body.find((p: any) => p.id === paperPhysPublished.id);
+      expect(adminPaper.solutionText).toContain('TOP SECRET ANSWER');
+      expect(adminPaper.solutionStorageKey).toBe('solutions/physics_2015_answers.pdf');
+
+      // Unauthenticated request to /api/papers/:id/solution is blocked
+      const unauthSol = await callApi('GET', `/api/papers/${paperPhysPublished.id}/solution`);
+      expect(unauthSol.status).toBe(401);
+
+      // Student without active enrollment is blocked with 403
+      const studentBlockedSol = await callApi('GET', `/api/papers/${paperPhysPublished.id}/solution`, undefined, {
+        'x-actor-id': studentB.id,
+      });
+      expect(studentBlockedSol.status).toBe(403);
+
+      // Admin can retrieve the solution document
+      const adminSol = await callApi('GET', `/api/papers/${paperPhysPublished.id}/solution`, undefined, {
+        'x-actor-id': adminUser.id,
+      });
+      expect(adminSol.status).toBe(200);
+      expect(adminSol.body.solutionText).toContain('TOP SECRET ANSWER');
+
+      // Clean up solution setting
+      await prisma.systemSetting.deleteMany({ where: { key: settingKey } });
     });
   });
 });
