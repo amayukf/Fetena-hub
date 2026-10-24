@@ -1,7 +1,13 @@
 {
-  "description": "Access previous exam papers effortlessly with a low semester fee, designed for Ambo University students to enhance their study experience.",
+  "title": "Fetena Hub | Ambo University Past Exam Papers & Verified Solutions",
+  "description": "Ambo University's official student exam archive. Access past freshman midterms, finals, model papers, and verified faculty answer keys with instant mobile access.",
+  "openGraph": {
+    "title": "Fetena Hub | Ambo University Past Exam Papers & Verified Solutions",
+    "description": "Ambo University's official student exam archive. Access past freshman midterms, finals, model papers, and verified faculty answer keys with instant mobile access.",
+    "image": "/og-image.jpg"
+  },
   "robots": {
-    "index": false
+    "index": true
   },
   "accessibility": {
     "addBypassLinks": false,

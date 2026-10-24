@@ -111,11 +111,11 @@ function figmaSiteConfiguration(config: FigmaSiteConfiguration): Plugin {
     return html.replace(`<!-- ${slotName} -->`, content)
   }
 
-  const title = config.title ?? "Figma Make App"
-  const description = config.description ?? ''
+  const title = config.title ?? "Fetena Hub | Ambo University Past Exam Papers & Verified Solutions"
+  const description = config.description ?? "Ambo University's official student exam archive. Access past freshman midterms, finals, model papers, and verified faculty answer keys with instant mobile access."
   // Imported HTML keeps its own favicon; new Makes default to the Make product icon.
   const favicon = config.icons?.icon ?? '/favicon.svg'
-  const socialImage = config.openGraph?.image ?? ''
+  const socialImage = config.openGraph?.image ?? '/og-image.jpg'
   const language = sanitizeHtmlValue(config.language) || 'en'
   const googleAnalyticsId = sanitizeHtmlValue(config.analytics?.googleAnalyticsId)
   const headStart = config.customScripts?.headStart ?? ''
