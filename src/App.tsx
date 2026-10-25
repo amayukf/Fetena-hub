@@ -117,8 +117,8 @@ export function Badge({ children, tone = "neutral" }: { children: ReactNode; ton
   return <span className={`badge badge-${tone}`}>{children}</span>;
 }
 
-export function Card({ children, className = "", style }: { children: ReactNode; className?: string; style?: React.CSSProperties }) {
-  return <div className={`card ${className}`} style={style}>{children}</div>;
+export function Card({ children, className = "", style, onClick }: { children: ReactNode; className?: string; style?: React.CSSProperties; onClick?: () => void }) {
+  return <div className={`card ${className}`} style={style} onClick={onClick}>{children}</div>;
 }
 
 export function Logo({ compact = false }: { compact?: boolean }) {
@@ -138,7 +138,7 @@ export function Logo({ compact = false }: { compact?: boolean }) {
 }
 
 const studentNav: Array<[Screen, IconName, string]> = [
-  ["dashboard", "home", "Home"], ["browse", "search", "Browse papers"],
+  ["dashboard", "home", "Home"], ["semester", "book", "My Courses & Exams"],
   ["payments", "card", "Payments"], ["requests", "upload", "Requests & uploads"],
   ["notifications", "bell", "Notifications"], ["profile", "user", "Profile & settings"],
   ["help", "help", "Help & support"],
@@ -412,7 +412,7 @@ function Shell({
         <>
           <button
             type="button"
-            className={`mobile-nav-item ${screen === "dashboard" || screen === "semester" ? "active" : ""}`}
+            className={`mobile-nav-item ${screen === "dashboard" ? "active" : ""}`}
             onClick={() => go("dashboard")}
           >
             <div className="mobile-nav-icon-wrap">
@@ -422,13 +422,23 @@ function Shell({
           </button>
           <button
             type="button"
-            className={`mobile-nav-item ${screen === "browse" || screen === "course" ? "active" : ""}`}
-            onClick={() => go("browse")}
+            className={`mobile-nav-item ${screen === "semester" || screen === "course" || screen === "browse" ? "active" : ""}`}
+            onClick={() => go("semester")}
           >
             <div className="mobile-nav-icon-wrap">
-              <Icon name="search" size={20} />
+              <Icon name="book" size={20} />
             </div>
             <span>Exams</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-item ${screen === "payments" || screen === "checkout" ? "active" : ""}`}
+            onClick={() => go("payments")}
+          >
+            <div className="mobile-nav-icon-wrap">
+              <Icon name="card" size={20} />
+            </div>
+            <span>Payments</span>
           </button>
           <button
             type="button"
@@ -439,19 +449,6 @@ function Shell({
               <Icon name="upload" size={20} />
             </div>
             <span>Sell/Ask</span>
-          </button>
-          <button
-            type="button"
-            className={`mobile-nav-item ${screen === "notifications" ? "active" : ""}`}
-            onClick={() => go("notifications")}
-          >
-            <div className="mobile-nav-icon-wrap">
-              <Icon name="bell" size={20} />
-              {unreadNotifsCount > 0 && (
-                <span className="mobile-nav-badge">{unreadNotifsCount}</span>
-              )}
-            </div>
-            <span>Alerts</span>
           </button>
           <button
             type="button"
@@ -1070,6 +1067,9 @@ function Dashboard({
   selectedStream,
   courses: propCourses = [],
   papers: propPapers = [],
+  payments = [],
+  settings,
+  onSelectCourse,
   onOpenNotifyModal,
 }: {
   go: (s: Screen) => void;
@@ -1078,9 +1078,13 @@ function Dashboard({
   selectedStream: StreamCode;
   courses?: FreshmanCourseItem[];
   papers?: StoreExamPaper[];
+  payments?: StorePayment[];
+  settings?: SystemSettingsState;
+  onSelectCourse: (c: FreshmanCourseItem) => void;
   onOpenNotifyModal: () => void;
 }) {
   const streamLabel = selectedStream === "NAT_SCI" ? "Natural Science" : "Social Science";
+  // Strictly filter to the student's registered stream: 3 shared + 4 stream-specific courses = 7 courses
   const courses = (propCourses.length > 0
     ? propCourses.filter(c => c.streamScope === "SHARED" || c.streamScope === selectedStream)
     : getCoursesForStream(selectedStream)
@@ -1096,65 +1100,167 @@ function Dashboard({
     };
   });
 
+  const userStreamPayments = (payments || []).filter(
+    p => p.userId === currentUser.userId && p.stream === selectedStream && p.academicYearNumber === 1 && p.semesterNumber === 1
+  );
+  const pendingPayment = userStreamPayments.find(p => p.status === "PENDING");
+  const rejectedPayment = userStreamPayments.find(p => p.status === "REJECTED");
+
   return <>
     <PageHead
       eyebrow="AMBO UNIVERSITY"
       title={`${getTimeGreeting()}, ${currentUser.fullName.split(" ")[0]}.`}
       text={`Freshman ${streamLabel} · Year 1 exam preparation`}
     />
-    <Card className="welcome-banner">
+
+    {/* Hero Status & Direct Action Card */}
+    {isUnlocked ? (
+      <Card className="welcome-banner" style={{ background: "linear-gradient(135deg, #0c4a34 0%, #15803d 100%)", color: "#ffffff" }}>
+        <div>
+          <Badge tone="success">🎉 FULL ACCESS ACTIVE</Badge>
+          <Heading level={2} style={{ color: "#ffffff", marginTop: "6px" }}>{streamLabel} · Semester 1 Unlocked</Heading>
+          <p style={{ color: "rgba(255,255,255,0.9)" }}>All 7 courses unlocked · Tap any course below to study verified exam papers.</p>
+          <Button
+            onClick={() => go("semester")}
+            variant="secondary"
+            style={{ background: "#ffffff", color: "#0c4a34", fontWeight: 700, border: "none" }}
+          >
+            Open All Courses <Icon name="arrow"/>
+          </Button>
+        </div>
+        <div className="progress-ring">
+          <strong style={{ color: "#ffffff" }}>100%</strong>
+          <span style={{ color: "rgba(255,255,255,0.8)" }}>unlocked</span>
+        </div>
+      </Card>
+    ) : pendingPayment ? (
+      <Card className="welcome-banner" style={{ background: "linear-gradient(135deg, #78350f 0%, #d97706 100%)", color: "#ffffff" }}>
+        <div>
+          <Badge tone="warning">⏳ RECEIPT UNDER REVIEW</Badge>
+          <Heading level={2} style={{ color: "#ffffff", marginTop: "6px" }}>Verification in Progress</Heading>
+          <p style={{ color: "rgba(255,255,255,0.9)" }}>
+            Your receipt (Ref: <b>{pendingPayment.referenceCode}</b>) is being checked by Ambo University staff. Usually verified within {settings?.paymentVerificationSlaHours || "2"} hours.
+          </p>
+          <Button
+            onClick={() => go("payments")}
+            variant="secondary"
+            style={{ background: "#ffffff", color: "#92400e", fontWeight: 700, border: "none" }}
+          >
+            View Receipt Status <Icon name="arrow"/>
+          </Button>
+        </div>
+        <div className="progress-ring">
+          <strong style={{ color: "#ffffff" }}>⏳</strong>
+          <span style={{ color: "rgba(255,255,255,0.8)" }}>verifying</span>
+        </div>
+      </Card>
+    ) : rejectedPayment ? (
+      <Card className="welcome-banner" style={{ background: "linear-gradient(135deg, #7f1d1d 0%, #dc2626 100%)", color: "#ffffff" }}>
+        <div>
+          <Badge tone="danger">⚠️ RECEIPT NEEDS CORRECTION</Badge>
+          <Heading level={2} style={{ color: "#ffffff", marginTop: "6px" }}>Please Re-upload Receipt</Heading>
+          <p style={{ color: "rgba(255,255,255,0.9)" }}>
+            Reason: "{rejectedPayment.rejectionReason || "Could not verify transaction code"}"
+          </p>
+          <Button
+            onClick={() => go("checkout")}
+            variant="secondary"
+            style={{ background: "#ffffff", color: "#991b1b", fontWeight: 700, border: "none" }}
+          >
+            Resubmit Receipt <Icon name="arrow"/>
+          </Button>
+        </div>
+        <div className="progress-ring">
+          <strong style={{ color: "#ffffff" }}>⚠️</strong>
+          <span style={{ color: "rgba(255,255,255,0.8)" }}>action needed</span>
+        </div>
+      </Card>
+    ) : (
+      <Card className="welcome-banner" style={{ background: "linear-gradient(135deg, #0c4a34 0%, #1e3a5f 100%)", color: "#ffffff", border: "1px solid rgba(251, 191, 36, 0.4)" }}>
+        <div>
+          <Badge tone="accent">⚡ ONE-TIME SEMESTER PASS · {settings?.semesterPriceEtb || 50} ETB</Badge>
+          <Heading level={2} style={{ color: "#ffffff", marginTop: "6px" }}>Unlock All 7 {streamLabel} Courses</Heading>
+          <p style={{ color: "rgba(255,255,255,0.9)" }}>
+            Get past mid exams, finals, and verified answer keys for the entire semester.
+          </p>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "12px" }}>
+            <Button
+              onClick={() => go("checkout")}
+              style={{ background: "#FBBF24", color: "#0c4a34", fontWeight: 700, border: "none", padding: "10px 18px" }}
+            >
+              💳 Pay {settings?.semesterPriceEtb || 50} ETB via Telebirr / CBE <Icon name="arrow"/>
+            </Button>
+            <Button
+              onClick={() => go("viewer")}
+              variant="secondary"
+              style={{ background: "rgba(255,255,255,0.15)", color: "#ffffff", border: "1px solid rgba(255,255,255,0.3)" }}
+            >
+              Preview free sample
+            </Button>
+          </div>
+        </div>
+        <div className="progress-ring">
+          <strong style={{ color: "#FBBF24" }}>{settings?.semesterPriceEtb || 50}</strong>
+          <span style={{ color: "rgba(255,255,255,0.8)" }}>ETB only</span>
+        </div>
+      </Card>
+    )}
+
+    {/* All 7 Stream Courses Listed Directly on Home with 1-Tap Access */}
+    <div className="section-title" style={{ marginTop: "24px" }}>
       <div>
-        <Badge tone={isUnlocked ? "success" : "warning"}>
-          {isUnlocked ? "SEMESTER 1 UNLOCKED" : "SEMESTER ACCESS PENDING"}
-        </Badge>
-        <Heading level={2}>{streamLabel} · Year 1</Heading>
-        <p>Semester 1 · 7 courses (3 shared across streams) · Verified past exam papers</p>
-        <Button
-          onClick={() => go(isUnlocked ? "semester" : "checkout")}
-          variant="secondary"
-          className="welcome-banner-btn"
+        <Heading level={2}>Your 7 Semester Courses</Heading>
+        <p style={{ color: "var(--muted)", margin: "4px 0 0", fontSize: "0.88rem" }}>
+          Freshman {streamLabel} (Year 1, Semester 1) · Tap any course to open its past exams
+        </p>
+      </div>
+      <Badge tone="neutral">7 courses</Badge>
+    </div>
+
+    <div className="course-list" style={{ marginTop: "12px" }}>
+      {courses.map((c) => (
+        <Card
+          className="course-row"
+          key={c.id}
+          style={{ cursor: "pointer", transition: "transform 0.15s ease, box-shadow 0.15s ease" }}
+          onClick={() => {
+            onSelectCourse(c);
+            go("course");
+          }}
         >
-          {isUnlocked ? "Open semester" : "Unlock for 50 ETB"} <Icon name="arrow"/>
-        </Button>
-      </div>
-      <div className="progress-ring">
-        <strong>{isUnlocked ? "100%" : "0%"}</strong>
-        <span>{isUnlocked ? "unlocked" : "locked"}</span>
-      </div>
-    </Card>
-
-    <div className="section-title">
-      <Heading level={2}>Freshman semesters</Heading>
-      <Button variant="ghost" onClick={() => go("browse")}>Change stream <Icon name="arrow"/></Button>
-    </div>
-    <div className="semester-grid">
-      <Card className={`semester-mini ${isUnlocked ? "unlocked" : ""}`}>
-        <div className={`card-icon ${isUnlocked ? "" : "muted"}`}><Icon name={isUnlocked ? "book" : "lock"}/></div>
-        <Badge tone={isUnlocked ? "success" : "neutral"}>{isUnlocked ? "UNLOCKED" : "AVAILABLE · 50 ETB"}</Badge>
-        <Heading level={3}>{streamLabel} · Year 1</Heading>
-        <p>Semester 1 · 7 courses</p>
-        <Button variant="ghost" onClick={() => go("semester")}>
-          {isUnlocked ? "Open semester" : "View courses"} <Icon name="chevron"/>
-        </Button>
-      </Card>
-
-      <Card className="semester-mini" style={{ borderStyle: "dashed" }}>
-        <div className="card-icon muted"><Icon name="clock"/></div>
-        <Badge tone="accent">COMING SOON</Badge>
-        <Heading level={3}>{streamLabel} · Year 1</Heading>
-        <p>Semester 2 · In preparation</p>
-        <Button variant="secondary" onClick={onOpenNotifyModal}>
-          <Icon name="bell"/> Notify me
-        </Button>
-      </Card>
-
-      <button className="add-semester" onClick={() => go("browse")}>
-        <Icon name="plus"/>
-        <span>Switch stream ({selectedStream === "NAT_SCI" ? "Social Science" : "Natural Science"})</span>
-      </button>
+          <span className="course-icon"><Icon name="book"/></span>
+          <div className="course-info">
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <small style={{ fontWeight: 700 }}>{c.code}</small>
+              {c.isShared ? (
+                <Badge tone="accent">SHARED COURSE</Badge>
+              ) : (
+                <Badge tone="neutral">{streamLabel.toUpperCase()}</Badge>
+              )}
+            </div>
+            <Heading level={3} style={{ margin: "4px 0" }}>{c.title}</Heading>
+            <p>{c.creditHours} Credit Hours · {c.breakdown}</p>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <Badge tone={c.paperCount > 0 ? "accent" : "neutral"}>
+              {c.paperCount > 0 ? `${c.paperCount} papers` : "Exam papers"}
+            </Badge>
+            <Button
+              variant={isUnlocked ? "primary" : "secondary"}
+              onClick={() => {
+                onSelectCourse(c);
+                go("course");
+              }}
+            >
+              <span>View papers</span> <Icon name="chevron"/>
+            </Button>
+          </div>
+        </Card>
+      ))}
     </div>
 
-    <div className="content-grid">
+    {/* Secondary Features: Free Sample & Semester 2 Coming Soon */}
+    <div className="content-grid" style={{ marginTop: "24px" }}>
       <div>
         <div className="section-title"><Heading level={2}>Featured free sample</Heading></div>
         <Card className="continue-card">
@@ -1167,20 +1273,22 @@ function Dashboard({
           <Button onClick={() => go("viewer")}>Preview free sample</Button>
         </Card>
       </div>
+
       <div>
-        <div className="section-title"><Heading level={2}>Courses in your stream</Heading></div>
-        <Card className="recent-list">
-          {courses.slice(0, 4).map((c) => (
-            <button key={c.id} onClick={() => go("semester")}>
-              <span className="tiny-file"><Icon name="book"/></span>
-              <span>
-                <strong>{c.code} {c.title}</strong>
-                <small>{c.isShared ? "Shared course · 3 Cr. Hr." : `${c.breakdown} · 3 Cr. Hr.`}</small>
-              </span>
-              {c.isShared && <Badge tone="accent">SHARED</Badge>}
-              <Icon name="chevron"/>
-            </button>
-          ))}
+        <div className="section-title"><Heading level={2}>Upcoming terms</Heading></div>
+        <Card className="continue-card" style={{ borderStyle: "dashed" }}>
+          <div className="pdf-thumb" style={{ background: "rgba(12, 74, 52, 0.08)", color: "var(--primary)" }}>
+            <Icon name="clock" size={32}/>
+            <span>TERM 2</span>
+          </div>
+          <div>
+            <Badge tone="accent">COMING SOON</Badge>
+            <Heading level={3}>{streamLabel} · Semester 2</Heading>
+            <p>Exam digitization in progress. Get notified when ready.</p>
+          </div>
+          <Button variant="secondary" onClick={onOpenNotifyModal} icon="bell">
+            Notify me
+          </Button>
         </Card>
       </div>
     </div>
@@ -1361,7 +1469,7 @@ function Semester({
   const rejectedPayment = userStreamPayments.find(p => p.status === "REJECTED");
 
   return <>
-    <button className="back-link page-back" onClick={() => go("browse")}>← Back to stream selection</button>
+    <button className="back-link page-back" onClick={() => go("dashboard")}>← Back to Dashboard</button>
     <PageHead
       eyebrow="AMBO UNIVERSITY"
       title={`${streamLabel} · Year 1, Semester 1`}
@@ -2732,11 +2840,92 @@ function Checkout({
 // PAYMENTS & RECEIPTS HISTORY
 // -------------------------------------------------------------
 
-function Payments({ payments, settings, go }: { payments: StorePayment[]; settings?: SystemSettingsState; go?: (s: Screen) => void }) {
+function Payments({
+  payments,
+  settings,
+  go,
+  isUnlocked,
+  currentUser,
+  selectedStream = "NAT_SCI",
+}: {
+  payments: StorePayment[];
+  settings?: SystemSettingsState;
+  go?: (s: Screen) => void;
+  isUnlocked?: boolean;
+  currentUser?: UserSession;
+  selectedStream?: StreamCode;
+}) {
   const [selectedReceipt, setSelectedReceipt] = useState<StorePayment | null>(null);
+
+  const userStreamPayments = (payments || []).filter(
+    p => p.userId === currentUser?.userId && p.stream === selectedStream && p.academicYearNumber === 1 && p.semesterNumber === 1
+  );
+  const pendingPayment = userStreamPayments.find(p => p.status === "PENDING");
 
   return <>
     <PageHead eyebrow="ACCOUNT" title="Payments & receipts" text="View your payment submissions, reference codes, and verification status."/>
+
+    {/* Direct Checkout Banner if student is locked and hasn't paid yet */}
+    {!isUnlocked && !pendingPayment && (
+      <Card
+        className="unlock-cta-card"
+        style={{
+          marginBottom: "20px",
+          background: "linear-gradient(135deg, #0c4a34 0%, #166534 100%)",
+          color: "#ffffff",
+          padding: "20px 24px",
+          borderRadius: "12px",
+          boxShadow: "0 4px 16px rgba(12, 74, 52, 0.15)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
+          <div>
+            <Badge tone="accent">SEMESTER UNLOCK · {settings?.semesterPriceEtb || 50} ETB</Badge>
+            <Heading level={2} style={{ color: "#ffffff", margin: "8px 0 4px" }}>
+              Ready to unlock your semester?
+            </Heading>
+            <p style={{ color: "rgba(255,255,255,0.85)", margin: 0, fontSize: "0.9rem" }}>
+              Pay {settings?.semesterPriceEtb || 50} ETB via Telebirr or CBE to get full instant access to all past exam papers and solutions.
+            </p>
+          </div>
+          <Button
+            onClick={() => go?.("checkout")}
+            style={{
+              background: "#FBBF24",
+              color: "#0c4a34",
+              fontWeight: 700,
+              border: "none",
+              padding: "12px 22px",
+              fontSize: "0.95rem",
+            }}
+          >
+            💳 Pay 50 ETB to Unlock <Icon name="arrow"/>
+          </Button>
+        </div>
+      </Card>
+    )}
+
+    {pendingPayment && (
+      <div className="alert warning" style={{ marginBottom: "16px", display: "flex", alignItems: "center", gap: "10px", background: "rgba(245, 158, 11, 0.1)", border: "1px solid #f59e0b", color: "#92400e", padding: "12px 16px", borderRadius: "8px" }}>
+        <Icon name="clock" size={20}/>
+        <div>
+          <strong>Payment Under Review:</strong> Your payment reference <code>{pendingPayment.referenceCode}</code> is queued for verification by Ambo University staff (usually within {settings?.paymentVerificationSlaHours || "2"} hours).
+        </div>
+      </div>
+    )}
+
+    {isUnlocked && (
+      <div className="alert success" style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", background: "rgba(22, 101, 52, 0.08)", border: "1px solid var(--success)", color: "var(--success)", padding: "12px 16px", borderRadius: "8px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <Icon name="check" size={20}/>
+          <span><strong>Semester 1 Unlocked:</strong> You have full active access to all courses and exam papers.</span>
+        </div>
+        <Button variant="secondary" onClick={() => go?.("semester")} style={{ padding: "6px 14px", fontSize: "0.85rem" }}>
+          Open Courses <Icon name="arrow"/>
+        </Button>
+      </div>
+    )}
+
     <div className="alert info" style={{ marginBottom: "16px", display: "flex", alignItems: "center", gap: "8px", background: "rgba(12, 74, 52, 0.08)", color: "var(--primary)" }}>
       <Icon name="clock" size={18}/>
       <span>
@@ -4366,12 +4555,24 @@ export default function App() {
   }, [screen, selectedCourse, selectedPaper]);
 
   const go = (s: Screen) => {
-    setScreen(s);
+    let target = s;
+    // For enrolled students, going to "browse" skips the 2-step stream picker and opens their enrolled semester courses directly
+    if (currentUser?.role === "STUDENT" && target === "browse") {
+      target = "semester";
+    }
+    setScreen(target);
     try {
-      localStorage.setItem("ev_current_screen", s);
+      localStorage.setItem("ev_current_screen", target);
     } catch {}
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  // Keep selectedStream tightly synchronized with student's registered stream
+  useEffect(() => {
+    if (currentUser?.stream && currentUser.role === "STUDENT" && selectedStream !== currentUser.stream) {
+      setSelectedStream(currentUser.stream);
+    }
+  }, [currentUser?.stream, currentUser?.role, selectedStream]);
 
   const handleSelectCourse = (c: FreshmanCourseItem) => {
     setSelectedCourse(c);
@@ -5268,6 +5469,9 @@ export default function App() {
         selectedStream={selectedStream}
         courses={courses}
         papers={papers}
+        payments={payments}
+        settings={settings}
+        onSelectCourse={handleSelectCourse}
         onOpenNotifyModal={() => { setNotifyModalOpen(true); setNotifySubmitted(false); }}
       />
     ) :
@@ -5301,7 +5505,16 @@ export default function App() {
         onSelectPaper={handleSelectPaper}
       />
     ) :
-    screen === "payments" ? <Payments payments={payments} settings={settings} go={go}/> :
+    screen === "payments" ? (
+      <Payments
+        payments={payments}
+        settings={settings}
+        go={go}
+        isUnlocked={isCurrentSemesterUnlocked}
+        currentUser={currentUser}
+        selectedStream={selectedStream}
+      />
+    ) :
     screen === "requests" ? (
       <Requests
         currentUser={currentUser}
