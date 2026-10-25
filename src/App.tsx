@@ -670,6 +670,7 @@ function Auth({
   const [googleLoading, setGoogleLoading] = useState(false);
   const [googleConfig, setGoogleConfig] = useState<{ clientId: string | null; enabled: boolean } | null>(null);
   const [gsiLoaded, setGsiLoaded] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1180,6 +1181,26 @@ function Auth({
                 onChange={e => setPassword(e.target.value)}
               />
 
+              {!signup && !admin && (
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "-6px" }}>
+                  <button
+                    type="button"
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "var(--accent)",
+                      fontSize: "0.82rem",
+                      fontWeight: 650,
+                      cursor: "pointer",
+                      padding: "2px 0",
+                    }}
+                    onClick={() => setShowForgotPassword(true)}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+              )}
+
               <Button type="submit" className="full" disabled={loading} style={{ marginTop: "12px" }}>
                 {loading ? "Please wait..." : signup ? "Create student account" : admin ? "Sign in to Admin Console" : "Sign in"}
               </Button>
@@ -1214,6 +1235,105 @@ function Auth({
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {showForgotPassword && (
+          <div className="modal-backdrop" onClick={() => setShowForgotPassword(false)}>
+            <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: "480px" }}>
+              <div className="modal-head">
+                <div>
+                  <span className="eyebrow">STUDENT ACCOUNT RECOVERY</span>
+                  <Heading level={2} style={{ marginTop: "4px" }}>Forgot Your Password?</Heading>
+                </div>
+                <Button variant="ghost" onClick={() => setShowForgotPassword(false)}>
+                  <Icon name="close" />
+                </Button>
+              </div>
+
+              <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                <div style={{ padding: "14px", background: "var(--canvas)", border: "1px solid var(--line)", borderRadius: "10px" }}>
+                  <strong style={{ display: "block", fontSize: "0.92rem", marginBottom: "4px" }}>
+                    Signed up with Google?
+                  </strong>
+                  <p style={{ margin: 0, fontSize: "0.84rem", color: "var(--muted)" }}>
+                    If you created your account using Google, you do not need a password. You can log in directly anytime.
+                  </p>
+                  <Button
+                    variant="secondary"
+                    style={{ minHeight: "34px", padding: "0 12px", fontSize: "0.82rem", marginTop: "10px", width: "100%" }}
+                    onClick={() => {
+                      setShowForgotPassword(false);
+                      handleGoogleSignIn();
+                    }}
+                  >
+                    Log In with Google Now
+                  </Button>
+                </div>
+
+                <div style={{ padding: "16px", background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: "10px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                    <div style={{
+                      width: "32px",
+                      height: "32px",
+                      borderRadius: "50%",
+                      background: "#0088cc",
+                      color: "white",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: 800,
+                      fontSize: "0.9rem"
+                    }}>
+                      ✈
+                    </div>
+                    <div>
+                      <strong style={{ color: "#14532d", fontSize: "0.95rem" }}>Instant Password Reset via Telegram</strong>
+                      <small style={{ display: "block", color: "#166534" }}>Ambo University Campus Administrator</small>
+                    </div>
+                  </div>
+
+                  <p style={{ margin: "6px 0 12px 0", fontSize: "0.85rem", color: "#166534", lineHeight: 1.45 }}>
+                    Contact our official admin on Telegram at <b>@fetenahubambo</b>. Send your registered phone number or Student ID. We will issue you a secure temporary login key within a few minutes.
+                  </p>
+
+                  <a
+                    href="https://t.me/fetenahubambo?text=Hello%20Fetena%20Hub%20Admin%2C%20I%20forgot%20my%20student%20account%20password.%20My%20registered%20phone%20number%20or%20Student%20ID%20is%3A%20"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-primary"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "8px",
+                      width: "100%",
+                      background: "#0088cc",
+                      color: "#ffffff",
+                      borderColor: "#0088cc",
+                      textDecoration: "none",
+                      fontWeight: 700,
+                      fontSize: "0.9rem",
+                      minHeight: "40px",
+                      borderRadius: "8px"
+                    }}
+                  >
+                    <span>Message @fetenahubambo</span>
+                    <Icon name="arrow" size={16} />
+                  </a>
+                </div>
+
+                <div style={{ padding: "10px 14px", background: "rgba(15,23,42,0.03)", borderRadius: "8px", fontSize: "0.78rem", color: "var(--muted)" }}>
+                  💡 <b>How it works:</b> Once the admin gives you the temporary password, log in with it. Fetena Hub will immediately ask you to create your own new, private password before unlocking your courses.
+                </div>
+              </div>
+
+              <div className="modal-footer" style={{ borderTop: "1px solid var(--line)", padding: "12px 20px" }}>
+                <Button variant="secondary" onClick={() => setShowForgotPassword(false)} style={{ width: "100%" }}>
+                  Back to Sign In
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </Card>

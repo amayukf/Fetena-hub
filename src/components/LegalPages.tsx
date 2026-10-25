@@ -169,7 +169,7 @@ export function ContactPage({ go }: { go: (s: Screen) => void }) {
             <div style={{ color: 'var(--primary)', marginBottom: '8px' }}><Icon name="help" size={24}/></div>
             <strong>Telegram & Digital Support</strong>
             <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '4px 0 0' }}>
-              Telegram: @FetenaHubAmbo<br/>
+              Telegram: <a href="https://t.me/fetenahubambo" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', fontWeight: 650 }}>@fetenahubambo</a><br/>
               Email: support@fetenahub.edu.et
             </p>
           </div>

@@ -1007,12 +1007,17 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         }
       }
 
+      const mustChange =
+        isSuperAdmin && targetUserId !== actor.id && body.mustChangePassword !== undefined
+          ? Boolean(body.mustChangePassword)
+          : false;
+
       const newHash = await bcrypt.hash(newPassword, 10);
       await prisma.user.update({
         where: { id: targetUserId },
         data: {
           passwordHash: newHash,
-          mustChangePassword: false, // Flag cleared upon changing password!
+          mustChangePassword: mustChange,
         },
       });
 

@@ -568,7 +568,7 @@ export const api = {
     return request<any>('/api/auth/logout', { method: 'POST', headers: buildHeaders(), silentAuth: true, lenient: true });
   },
 
-  async changePassword(data: { oldPassword?: string; newPassword: string; userId?: string }) {
+  async changePassword(data: { oldPassword?: string; newPassword: string; userId?: string; mustChangePassword?: boolean }) {
     return request<any>('/api/auth/change-password', {
       method: 'POST',
       headers: buildHeaders(undefined, undefined, true),

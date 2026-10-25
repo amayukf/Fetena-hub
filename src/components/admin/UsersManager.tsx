@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Card, Heading, Badge, Button, Icon, PageHead } from '../../App';
+import { Card, Heading, Badge, Button, Icon, PageHead, Input } from '../../App';
 import { api } from '../../lib/api';
 import type { UserSession, Role } from '../../types';
 
@@ -20,6 +20,65 @@ export default function UsersManager({
   const [historyModalUser, setHistoryModalUser] = useState<any | null>(null);
   const [historyData, setHistoryData] = useState<any | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // Reset Password Modal
+  const [resetModalUser, setResetModalUser] = useState<any | null>(null);
+  const [tempPassword, setTempPassword] = useState('Ambo@2026');
+  const [forceChangeOnLogin, setForceChangeOnLogin] = useState(true);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetSuccessData, setResetSuccessData] = useState<{ user: any; password: string } | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [copiedSuccess, setCopiedSuccess] = useState(false);
+
+  const generateRandomPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$';
+    let res = '';
+    for (let i = 0; i < 8; i++) {
+      res += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setTempPassword(`Ambo#${res}`);
+  };
+
+  const handleOpenResetModal = (u: any) => {
+    setResetModalUser(u);
+    setTempPassword('Ambo@2026');
+    setForceChangeOnLogin(true);
+    setResetSuccessData(null);
+    setResetError(null);
+    setCopiedSuccess(false);
+  };
+
+  const handleConfirmReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetModalUser) return;
+    if (!tempPassword || tempPassword.length < 8) {
+      setResetError('Temporary password must be at least 8 characters long.');
+      return;
+    }
+    setResetLoading(true);
+    setResetError(null);
+    try {
+      await api.changePassword({
+        userId: resetModalUser.id,
+        newPassword: tempPassword,
+        mustChangePassword: forceChangeOnLogin,
+      });
+      setResetSuccessData({
+        user: resetModalUser,
+        password: tempPassword,
+      });
+    } catch (err: any) {
+      setResetError(err.message || 'Failed to reset password.');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard?.writeText(text);
+    setCopiedSuccess(true);
+    setTimeout(() => setCopiedSuccess(false), 2500);
+  };
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -251,6 +310,17 @@ export default function UsersManager({
                           <Icon name="activity" size={13} /> Access History
                         </Button>
 
+                        {isAdmin && (
+                          <Button
+                            variant="secondary"
+                            style={{ minHeight: '32px', padding: '0 8px', fontSize: '0.78rem' }}
+                            onClick={() => handleOpenResetModal(u)}
+                            title="Reset student password and issue temporary credentials"
+                          >
+                            <Icon name="lock" size={13} /> Reset Pwd
+                          </Button>
+                        )}
+
                         <Button
                           variant={u.isActive ? 'danger' : 'secondary'}
                           style={{ minHeight: '32px', padding: '0 8px', fontSize: '0.78rem' }}
@@ -427,6 +497,127 @@ export default function UsersManager({
               <Button variant="secondary" onClick={() => setHistoryModalUser(null)}>
                 Close
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {resetModalUser && (
+        <div className="modal-backdrop" onClick={() => { if (!resetLoading) setResetModalUser(null); }}>
+          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">STUDENT ACCOUNT CREDENTIALS</span>
+                <Heading level={2}>
+                  {resetSuccessData ? 'Password Reset Complete' : 'Reset Student Password'}
+                </Heading>
+              </div>
+              <Button variant="ghost" onClick={() => setResetModalUser(null)} disabled={resetLoading}>
+                <Icon name="close" />
+              </Button>
+            </div>
+
+            <div className="modal-body">
+              {resetSuccessData ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{ padding: '14px', background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#15803d', fontWeight: 700, marginBottom: '6px' }}>
+                      <Icon name="check" size={18} />
+                      <span>Temporary password generated successfully</span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: '0.85rem', color: '#166534' }}>
+                      The student has been marked for mandatory password change. They will be required to choose their own confidential password upon login.
+                    </p>
+                  </div>
+
+                  <div className="instruction-box" style={{ margin: 0 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div>Student: <b>{resetSuccessData.user.fullName}</b></div>
+                      <div>Identifier: <b>{resetSuccessData.user.phone || resetSuccessData.user.email}</b></div>
+                      {resetSuccessData.user.studentId && <div>Student ID: <b>{resetSuccessData.user.studentId}</b></div>}
+                      <div style={{ marginTop: '8px', padding: '10px', background: 'var(--canvas)', borderRadius: '6px', border: '1px dashed var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <small style={{ color: 'var(--muted)', display: 'block' }}>TEMPORARY PASSWORD</small>
+                          <strong style={{ fontSize: '1.1rem', letterSpacing: '0.04em' }}>{resetSuccessData.password}</strong>
+                        </div>
+                        <Button
+                          variant="secondary"
+                          style={{ minHeight: '30px', padding: '0 10px', fontSize: '0.78rem' }}
+                          onClick={() => copyToClipboard(resetSuccessData.password)}
+                        >
+                          {copiedSuccess ? '✓ Copied' : 'Copy Pwd'}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <Button
+                      variant="primary"
+                      onClick={() => {
+                        const msg = `Hello ${resetSuccessData.user.fullName}, your temporary password for Fetena Hub is: ${resetSuccessData.password} .\n\nPlease log in at https://fetenahub.com and you will be prompted to set your own new confidential password.`;
+                        copyToClipboard(msg);
+                      }}
+                    >
+                      {copiedSuccess ? '✓ Copied Message to Clipboard!' : 'Copy Telegram Message for Student'}
+                    </Button>
+                    <Button variant="secondary" onClick={() => setResetModalUser(null)}>
+                      Done
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleConfirmReset} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--muted)' }}>
+                    Resetting password for <b>{resetModalUser.fullName}</b> ({resetModalUser.phone || resetModalUser.email}).
+                  </p>
+
+                  {resetError && (
+                    <div className="alert danger" style={{ margin: 0 }}>
+                      <span>{resetError}</span>
+                    </div>
+                  )}
+
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Temporary Password</span>
+                      <button
+                        type="button"
+                        style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '0.78rem', fontWeight: 650, cursor: 'pointer', padding: 0 }}
+                        onClick={generateRandomPassword}
+                      >
+                        ⚡ Generate Random
+                      </button>
+                    </div>
+                    <Input
+                      label=""
+                      placeholder="At least 8 characters"
+                      value={tempPassword}
+                      onChange={e => setTempPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={forceChangeOnLogin}
+                      onChange={e => setForceChangeOnLogin(e.target.checked)}
+                    />
+                    <span>Force student to create a new password on login</span>
+                  </label>
+
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '10px' }}>
+                    <Button variant="secondary" onClick={() => setResetModalUser(null)} disabled={resetLoading}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={resetLoading}>
+                      {resetLoading ? 'Resetting...' : 'Confirm Reset'}
+                    </Button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         </div>
