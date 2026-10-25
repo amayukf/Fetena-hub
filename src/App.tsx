@@ -1947,6 +1947,18 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
       })
       .catch((err) => {
         if (current) {
+          const msg = (err?.message || '').toLowerCase();
+          // If the endpoint is not found (404) or paper has no solution, treat as no solution attached instead of an access denied error
+          if (msg.includes('not found') || msg.includes('404')) {
+            setSolutionData({
+              hasSolution: Boolean(paper?.solutionText || paper?.solutionStorageKey),
+              solutionText: paper?.solutionText,
+              solutionStorageKey: paper?.solutionStorageKey,
+              solutionFileName: paper?.solutionFileName,
+            });
+            setSolutionLoading(false);
+            return;
+          }
           setSolutionError(err.message || 'Authentication and course enrollment required to view verified solutions.');
           setSolutionLoading(false);
         }
@@ -2192,20 +2204,40 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
                 <div className="spinner" style={{ margin: "0 auto 16px" }} />
                 <p style={{ color: "var(--muted)" }}>Verifying entitlement & loading verified solution...</p>
               </div>
-            ) : solutionError ? (
-              <div style={{ textAlign: "center", padding: "48px 20px" }}>
-                <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>🔒</div>
-                <h3 style={{ color: "var(--ink)", marginBottom: "8px" }}>Verified Solution Access Locked</h3>
-                <p style={{ color: "var(--muted)", maxWidth: "460px", margin: "0 auto 20px", fontSize: "0.9rem" }}>
-                  {solutionError}
-                </p>
-                {!currentUser || !currentUser.userId ? (
-                  <Button onClick={() => go("login")}>Sign in to Access Solutions</Button>
-                ) : (
-                  <Button onClick={() => go("checkout")}>Unlock Course Access</Button>
-                )}
-              </div>
-            ) : (solutionData?.solutionText || paper?.solutionText) ? (
+            ) : solutionError ? (() => {
+              const errLower = (solutionError || '').toLowerCase();
+              const isAccessLock = errLower.includes('access denied') || errLower.includes('entitlement') || errLower.includes('unauthorized') || errLower.includes('authentication required');
+
+              if (!isAccessLock) {
+                return (
+                  <div style={{ textAlign: "center", padding: "48px 20px" }}>
+                    <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>📄</div>
+                    <h3 style={{ color: "var(--ink)", marginBottom: "8px" }}>No Verified Answer Key Attached Yet</h3>
+                    <p style={{ color: "var(--muted)", maxWidth: "460px", margin: "0 auto 20px", fontSize: "0.9rem" }}>
+                      Our academic review board has verified the exam questions, but a step-by-step solution key has not been published for this paper yet.
+                    </p>
+                    <Button variant="secondary" onClick={() => setActiveTab('questions')} style={{ margin: "0 auto" }}>
+                      Back to Exam Questions
+                    </Button>
+                  </div>
+                );
+              }
+
+              return (
+                <div style={{ textAlign: "center", padding: "48px 20px" }}>
+                  <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>🔒</div>
+                  <h3 style={{ color: "var(--ink)", marginBottom: "8px" }}>Verified Solution Access Locked</h3>
+                  <p style={{ color: "var(--muted)", maxWidth: "460px", margin: "0 auto 20px", fontSize: "0.9rem" }}>
+                    {solutionError}
+                  </p>
+                  {!currentUser || !currentUser.userId ? (
+                    <Button onClick={() => go("login")}>Sign in to Access Solutions</Button>
+                  ) : (
+                    <Button onClick={() => go("checkout")}>Unlock Course Access</Button>
+                  )}
+                </div>
+              );
+            })() : (solutionData?.solutionText || paper?.solutionText) ? (
               <div
                 style={{
                   fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",

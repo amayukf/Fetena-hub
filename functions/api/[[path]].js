@@ -27,7 +27,16 @@ export async function onRequest(context) {
   }
 
   try {
-    return await fetch(backendUrl.toString(), options);
+    const response = await fetch(backendUrl.toString(), options);
+    // If backend returns 404 for a solution query (e.g. backend pending redeploy),
+    // return a clean 200 JSON payload so students never see endpoint errors
+    if (response.status === 404 && url.pathname.endsWith('/solution') && context.request.method === 'GET') {
+      return new Response(JSON.stringify({ hasSolution: false, message: 'No verified solution attached for this paper yet.' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return response;
   } catch (error) {
     return new Response(JSON.stringify({ error: 'Backend unreachable: ' + error.message }), {
       status: 502,
