@@ -659,6 +659,7 @@ function Auth({
   onAuthSuccess: (user: UserSession, mustChangePassword?: boolean) => void;
 }) {
   const signup = mode === "signup", admin = mode === "admin";
+  const [signupStep, setSignupStep] = useState<1 | 2>(1);
   const [fullName, setFullName] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [studentId, setStudentId] = useState("");
@@ -670,6 +671,12 @@ function Auth({
   const [googleConfig, setGoogleConfig] = useState<{ clientId: string | null; enabled: boolean } | null>(null);
   const [gsiLoaded, setGsiLoaded] = useState(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (mode === "signup") {
+      setSignupStep(1);
+    }
+  }, [mode]);
 
   useEffect(() => {
     if (!admin) {
@@ -722,6 +729,7 @@ function Auth({
 
   useEffect(() => {
     if (admin) return;
+    if (signup && signupStep !== 2) return;
 
     let mounted = true;
     let timer: any = null;
@@ -790,7 +798,7 @@ function Auth({
       mounted = false;
       if (timer) clearInterval(timer);
     };
-  }, [admin, googleConfig, signup, stream]);
+  }, [admin, googleConfig, signup, signupStep, stream]);
 
   const handleGoogleSignIn = async () => {
     setError(null);
@@ -908,129 +916,304 @@ function Auth({
     <div className="auth-brand">
       <Logo/>
       <div>
-        <Badge tone="accent">{admin ? "SECURE ADMIN ACCESS" : "STUDY WITH CONFIDENCE"}</Badge>
-        <Heading level={1}>{admin ? "Manage the library that helps students succeed." : "Everything you need to prepare, in one place."}</Heading>
-        <p>{admin ? "Authorized staff only. Role-based access control and audit logging active." : "Access organized, quality-checked exam papers from any device—even on a slow connection."}</p>
+        <Badge tone="accent">
+          {admin
+            ? "SECURE ADMIN ACCESS"
+            : signup
+            ? signupStep === 1
+              ? "STEP 1 OF 2 · ACADEMIC STREAM"
+              : "STEP 2 OF 2 · REGISTRATION"
+            : "STUDY WITH CONFIDENCE"}
+        </Badge>
+        <Heading level={1}>
+          {admin
+            ? "Manage the library that helps students succeed."
+            : signup
+            ? "Everything you need for your Freshman stream."
+            : "Everything you need to prepare, in one place."}
+        </Heading>
+        <p>
+          {admin
+            ? "Authorized staff only. Role-based access control and audit logging active."
+            : signup
+            ? "Choose your stream to unlock past exam papers, midterms, and verified answer keys."
+            : "Access organized, quality-checked exam papers from any device—even on a slow connection."}
+        </p>
       </div>
       <small>Ambo University</small>
     </div>
     <div className="auth-form">
       <div className="auth-mobile-logo"><Logo/></div>
       <Card>
-        <button className="back-link" onClick={() => go("landing")}>← Back to home</button>
-        <Heading level={2}>{signup ? "Create your student account" : admin ? "Admin sign in" : "Welcome back"}</Heading>
-        <p>{signup ? "Join Ambo University students preparing for Freshman examinations." : "Enter your credentials to continue to Fetena Hub."}</p>
+        {signup && signupStep === 1 ? (
+          <div>
+            <button type="button" className="back-link" onClick={() => go("landing")}>
+              ← Back to home
+            </button>
+            <div style={{ marginBottom: "16px" }}>
+              <Badge tone="accent">STEP 1 OF 2 · CHOOSE YOUR STREAM</Badge>
+              <Heading level={2} style={{ marginTop: "8px" }}>Select your curriculum stream</Heading>
+              <p>Choose your stream so Fetena Hub organizes past papers, midterms, and verified solutions for your exact courses.</p>
+            </div>
 
-        {error && (
-          <div className="alert danger" style={{ margin: "14px 0" }}>
-            <span>{error}</span>
-          </div>
-        )}
-
-        {!admin && (
-          <div style={{ margin: "20px 0 16px 0" }}>
-            {signup && (
-              <div style={{ marginBottom: "14px" }}>
-                <Select label="Curriculum Stream" value={stream} onChange={e => setStream(e.target.value as StreamCode)}>
-                  <option value="NAT_SCI">Natural Science Stream</option>
-                  <option value="SOC_SCI">Social Science Stream</option>
-                </Select>
-              </div>
-            )}
-            <div className="google-btn-wrapper">
+            <div className="stream-selection-cards">
               <div
-                ref={googleBtnRef}
-                className="google-btn-mount"
-                style={{ display: gsiLoaded && !googleLoading ? "flex" : "none" }}
-              />
+                className={`stream-choice-card ${stream === "NAT_SCI" ? "selected" : ""}`}
+                onClick={() => {
+                  setStream("NAT_SCI");
+                  setSignupStep(2);
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    setStream("NAT_SCI");
+                    setSignupStep(2);
+                  }
+                }}
+              >
+                <div className="stream-choice-head">
+                  <div className="stream-choice-title-wrap">
+                    <span className="stream-choice-icon" aria-hidden="true">🧪</span>
+                    <div>
+                      <h3 className="stream-choice-title">Natural Science</h3>
+                      <span className="stream-choice-subtitle">Freshman Year 1 · 7 Courses</span>
+                    </div>
+                  </div>
+                  <Badge tone="accent">NAT_SCI</Badge>
+                </div>
+                <p style={{ fontSize: "0.84rem", color: "var(--muted)", margin: "4px 0" }}>
+                  For students in engineering, medicine, computing, health sciences, and natural sciences.
+                </p>
+                <div className="stream-choice-courses">
+                  <span className="stream-course-tag">General Physics</span>
+                  <span className="stream-course-tag">Math for Natural Sci</span>
+                  <span className="stream-course-tag">General Psychology</span>
+                  <span className="stream-course-tag">Geography of Ethiopia</span>
+                  <span className="stream-course-tag">Communicative English</span>
+                  <span className="stream-course-tag">Logic & Critical Thinking</span>
+                  <span className="stream-course-tag">Physical Fitness</span>
+                </div>
+                <div className="stream-choice-action">
+                  <span>Continue with Natural Science</span>
+                  <span>→</span>
+                </div>
+              </div>
 
-              {(!gsiLoaded || googleLoading) && (
-                <button
-                  type="button"
-                  className="google-btn"
-                  onClick={handleGoogleSignIn}
-                  disabled={loading || googleLoading}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-                  </svg>
-                  <span>{googleLoading ? "Connecting with Google..." : signup ? "Create account with Google" : "Continue with Google"}</span>
-                </button>
-              )}
+              <div
+                className={`stream-choice-card ${stream === "SOC_SCI" ? "selected" : ""}`}
+                onClick={() => {
+                  setStream("SOC_SCI");
+                  setSignupStep(2);
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    setStream("SOC_SCI");
+                    setSignupStep(2);
+                  }
+                }}
+              >
+                <div className="stream-choice-head">
+                  <div className="stream-choice-title-wrap">
+                    <span className="stream-choice-icon" aria-hidden="true">⚖️</span>
+                    <div>
+                      <h3 className="stream-choice-title">Social Science</h3>
+                      <span className="stream-choice-subtitle">Freshman Year 1 · 7 Courses</span>
+                    </div>
+                  </div>
+                  <Badge tone="accent">SOC_SCI</Badge>
+                </div>
+                <p style={{ fontSize: "0.84rem", color: "var(--muted)", margin: "4px 0" }}>
+                  For students in business, economics, social sciences, humanities, law, and languages.
+                </p>
+                <div className="stream-choice-courses">
+                  <span className="stream-course-tag">Economics</span>
+                  <span className="stream-course-tag">Social Anthropology</span>
+                  <span className="stream-course-tag">Intro to Emerging Tech</span>
+                  <span className="stream-course-tag">Entrepreneurship</span>
+                  <span className="stream-course-tag">Communicative English</span>
+                  <span className="stream-course-tag">Logic & Critical Thinking</span>
+                  <span className="stream-course-tag">Physical Fitness</span>
+                </div>
+                <div className="stream-choice-action">
+                  <span>Continue with Social Science</span>
+                  <span>→</span>
+                </div>
+              </div>
             </div>
 
-            <div className="auth-separator">
-              <span>OR {signup ? "SIGN UP WITH" : "SIGN IN WITH"} PASSWORD</span>
-            </div>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit}>
-          {signup && (
-            <Input
-              label="Full name"
-              placeholder="e.g. Student Full Name"
-              value={fullName}
-              onChange={e => setFullName(e.target.value)}
-            />
-          )}
-
-          <Input
-            label="Phone number or email"
-            placeholder={signup ? "+251 9... or student@amu.edu.et" : "Enter phone or email"}
-            value={identifier}
-            onChange={e => setIdentifier(e.target.value)}
-          />
-
-          {signup && (
-            <div className="form-grid">
-              <Select label="Curriculum Stream" value={stream} onChange={e => setStream(e.target.value as StreamCode)}>
-                <option value="NAT_SCI">Natural Science Stream</option>
-                <option value="SOC_SCI">Social Science Stream</option>
-              </Select>
-              <Input
-                label="Student ID (Optional)"
-                placeholder="e.g. AMU-2026-0042"
-                value={studentId}
-                onChange={e => setStudentId(e.target.value)}
-              />
-            </div>
-          )}
-
-          <Input
-            label="Password"
-            placeholder="At least 8 characters"
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-          />
-
-          <Button type="submit" className="full" disabled={loading} style={{ marginTop: "12px" }}>
-            {loading ? "Please wait..." : signup ? "Create account" : admin ? "Sign in to Admin Console" : "Sign in"}
-          </Button>
-        </form>
-
-        {!admin ? (
-          <>
             <p className="auth-switch">
-              {signup ? "Already have an account?" : "New to Fetena Hub?"}{" "}
-              <button onClick={() => { setError(null); go(signup ? "login" : "signup"); }}>
-                {signup ? "Log in" : "Create an account"}
+              Already have an account?{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  go("login");
+                }}
+              >
+                Log in
               </button>
             </p>
-          </>
+          </div>
         ) : (
-          <div style={{ textAlign: "center", marginTop: "16px", paddingTop: "12px", borderTop: "1px solid var(--line)" }}>
+          <div>
             <button
               type="button"
-              style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "0.85rem", cursor: "pointer" }}
-              onClick={() => { setError(null); go("login"); }}
+              className="back-link"
+              onClick={() => {
+                if (signup && signupStep === 2) {
+                  setSignupStep(1);
+                } else {
+                  go("landing");
+                }
+              }}
             >
-              ← Return to Student Sign In
+              {signup && signupStep === 2 ? "← Choose a different stream" : "← Back to home"}
             </button>
+            <Heading level={2}>
+              {signup ? "Create your student account" : admin ? "Admin sign in" : "Welcome back"}
+            </Heading>
+            <p>
+              {signup
+                ? "Fast 1-tap Google sign up or fill in your details below."
+                : "Enter your credentials to continue to Fetena Hub."}
+            </p>
+
+            {signup && (
+              <div className="stream-selected-banner">
+                <div className="stream-selected-info">
+                  <span className="stream-selected-icon">{stream === "NAT_SCI" ? "🧪" : "⚖️"}</span>
+                  <div>
+                    <strong>{stream === "NAT_SCI" ? "Natural Science Stream" : "Social Science Stream"}</strong>
+                    <small>Freshman Year 1 · Selected for this account</small>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="stream-change-btn"
+                  onClick={() => setSignupStep(1)}
+                  title="Change stream"
+                >
+                  Change stream
+                </button>
+              </div>
+            )}
+
+            {error && (
+              <div className="alert danger" style={{ margin: "14px 0" }}>
+                <span>{error}</span>
+              </div>
+            )}
+
+            {!admin && (
+              <div style={{ margin: "20px 0 16px 0" }}>
+                <div className="google-btn-wrapper">
+                  <div
+                    ref={googleBtnRef}
+                    className="google-btn-mount"
+                    style={{ display: gsiLoaded && !googleLoading ? "flex" : "none" }}
+                  />
+
+                  {(!gsiLoaded || googleLoading) && (
+                    <button
+                      type="button"
+                      className="google-btn"
+                      onClick={handleGoogleSignIn}
+                      disabled={loading || googleLoading}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                      </svg>
+                      <span>
+                        {googleLoading
+                          ? "Connecting with Google..."
+                          : signup
+                          ? `Sign up with Google (${stream === "NAT_SCI" ? "Natural" : "Social"})`
+                          : "Continue with Google"}
+                      </span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="auth-separator">
+                  <span>OR {signup ? "FILL IN DETAILS MANUALLY" : "SIGN IN WITH PASSWORD"}</span>
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit}>
+              {signup && (
+                <Input
+                  label="Full name"
+                  placeholder="e.g. Student Full Name"
+                  value={fullName}
+                  onChange={e => setFullName(e.target.value)}
+                />
+              )}
+
+              <Input
+                label="Phone number or email"
+                placeholder={signup ? "+251 9... or student@amu.edu.et" : "Enter phone or email"}
+                value={identifier}
+                onChange={e => setIdentifier(e.target.value)}
+              />
+
+              {signup && (
+                <Input
+                  label="Student ID (Optional)"
+                  placeholder="e.g. AMU-2026-0042"
+                  value={studentId}
+                  onChange={e => setStudentId(e.target.value)}
+                />
+              )}
+
+              <Input
+                label="Password"
+                placeholder="At least 8 characters"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
+
+              <Button type="submit" className="full" disabled={loading} style={{ marginTop: "12px" }}>
+                {loading ? "Please wait..." : signup ? "Create student account" : admin ? "Sign in to Admin Console" : "Sign in"}
+              </Button>
+            </form>
+
+            {!admin ? (
+              <p className="auth-switch">
+                {signup ? "Already have an account?" : "New to Fetena Hub?"}{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    if (signup) {
+                      go("login");
+                    } else {
+                      setSignupStep(1);
+                      go("signup");
+                    }
+                  }}
+                >
+                  {signup ? "Log in" : "Create an account"}
+                </button>
+              </p>
+            ) : (
+              <div style={{ textAlign: "center", marginTop: "16px", paddingTop: "12px", borderTop: "1px solid var(--line)" }}>
+                <button
+                  type="button"
+                  style={{ background: "none", border: "none", color: "var(--muted)", fontSize: "0.85rem", cursor: "pointer" }}
+                  onClick={() => { setError(null); go("login"); }}
+                >
+                  ← Return to Student Sign In
+                </button>
+              </div>
+            )}
           </div>
         )}
       </Card>

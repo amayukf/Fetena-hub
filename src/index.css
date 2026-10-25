@@ -232,6 +232,137 @@ footer small { grid-column: span 2; color: var(--muted); border-top: 1px solid v
   padding: 0 12px;
 }
 
+/* Stream Selection in Signup Step 1 */
+.stream-selection-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 18px 0;
+}
+.stream-choice-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  background: var(--surface, #ffffff);
+  border: 2px solid var(--line, #e2e8f0);
+  border-radius: var(--radius-md, 12px);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.stream-choice-card:hover {
+  border-color: var(--accent, #0c4a34);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(12, 74, 52, 0.1);
+  background: #fbfdfc;
+}
+.stream-choice-card.selected {
+  border-color: var(--accent, #0c4a34);
+  background: #f4f9f6;
+  box-shadow: 0 4px 12px rgba(12, 74, 52, 0.12);
+}
+.stream-choice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.stream-choice-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.stream-choice-icon {
+  font-size: 1.7rem;
+  line-height: 1;
+}
+.stream-choice-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--ink, #0f172a);
+}
+.stream-choice-subtitle {
+  font-size: 0.78rem;
+  color: var(--muted, #64748b);
+  display: block;
+  margin-top: 1px;
+}
+.stream-choice-courses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 2px 0;
+}
+.stream-course-tag {
+  font-size: 0.72rem;
+  padding: 3px 8px;
+  background: rgba(15, 23, 42, 0.05);
+  color: var(--ink, #1e293b);
+  border-radius: 6px;
+  font-weight: 500;
+}
+.stream-choice-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line, #e2e8f0);
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--accent, #0c4a34);
+}
+
+/* Selected Stream Banner in Step 2 */
+.stream-selected-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #f0fdf4;
+  border: 1.5px solid #86efac;
+  border-radius: var(--radius-sm, 10px);
+  margin: 14px 0 16px 0;
+}
+.stream-selected-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.stream-selected-icon {
+  font-size: 1.35rem;
+}
+.stream-selected-info strong {
+  display: block;
+  font-size: 0.9rem;
+  color: #14532d;
+  font-weight: 700;
+}
+.stream-selected-info small {
+  display: block;
+  font-size: 0.75rem;
+  color: #166534;
+}
+.stream-change-btn {
+  background: transparent;
+  border: 1px solid #86efac;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: #15803d;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.stream-change-btn:hover {
+  background: #dcfce7;
+  border-color: #4ade80;
+}
+
 /* Application shell */
 .app-shell { min-height: 100vh; padding: 76px 0 0 256px; }
 .topbar { height: 76px; background: rgba(255,255,255,.95); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); position: fixed; z-index: 20; top: 0; left: 0; right: 0; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; }
