@@ -5734,7 +5734,7 @@ export default function App() {
         onAuthSuccess={(u, mustChange) => {
           setCurrentUser(u);
           setSelectedStream(u.stream || "NAT_SCI");
-          setMustChangePassword(Boolean(mustChange));
+          setMustChangePassword(Boolean(mustChange || u.mustChangePassword));
           // Always reset unlock state when a new user logs in
           setUnlockedSemesters(new Set());
           refreshDatabaseData();
@@ -5752,7 +5752,7 @@ export default function App() {
         onAuthSuccess={(u, mustChange) => {
           setCurrentUser(u);
           setSelectedStream(u.stream || "NAT_SCI");
-          setMustChangePassword(Boolean(mustChange));
+          setMustChangePassword(Boolean(mustChange || u.mustChangePassword));
           // Always reset unlock state when a new user logs in
           setUnlockedSemesters(new Set());
           refreshDatabaseData();
@@ -5952,7 +5952,7 @@ export default function App() {
       </Shell>
 
       {/* Force Password Change Modal (First login for admin or temporary passwords) */}
-      {mustChangePassword && (
+      {(mustChangePassword || Boolean(currentUser?.mustChangePassword)) && (
         <ForcePasswordChangeModal
           onPasswordChanged={() => {
             setMustChangePassword(false);

@@ -63,6 +63,14 @@ export default function UsersManager({
         newPassword: tempPassword,
         mustChangePassword: forceChangeOnLogin,
       });
+
+      // Also ensure mustChangePassword is saved via updateUser
+      if (forceChangeOnLogin) {
+        try {
+          await api.updateUser(resetModalUser.id, { mustChangePassword: true }, currentUser.userId, currentUser.role);
+        } catch {}
+      }
+
       setResetSuccessData({
         user: resetModalUser,
         password: tempPassword,

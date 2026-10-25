@@ -4503,6 +4503,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           role: body.role !== undefined ? (body.role as Role) : undefined,
           isActive: body.isActive !== undefined ? Boolean(body.isActive) : undefined,
           canSell: body.canSell !== undefined ? Boolean(body.canSell) : undefined,
+          mustChangePassword: body.mustChangePassword !== undefined ? Boolean(body.mustChangePassword) : undefined,
         },
         select: {
           id: true,
@@ -4513,6 +4514,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
           role: true,
           isActive: true,
           canSell: true,
+          mustChangePassword: true,
         },
       });
 
