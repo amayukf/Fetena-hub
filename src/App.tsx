@@ -1418,93 +1418,91 @@ function Dashboard({
 
     {/* Hero Status & Direct Action Card */}
     {isUnlocked ? (
-      <Card className="welcome-banner" style={{ background: "linear-gradient(135deg, #0c4a34 0%, #15803d 100%)", color: "#ffffff" }}>
+      <Card className="welcome-banner welcome-banner-unlocked">
         <div>
           <Badge tone="success">🎉 FULL ACCESS ACTIVE</Badge>
-          <Heading level={2} style={{ color: "#ffffff", marginTop: "6px" }}>{streamLabel} · Semester 1 Unlocked</Heading>
-          <p style={{ color: "rgba(255,255,255,0.9)" }}>All 7 courses unlocked · Tap any course below to study verified exam papers.</p>
+          <Heading level={2}>{streamLabel} · Semester 1 Unlocked</Heading>
+          <p>All 7 courses unlocked · Tap any course below to study verified exam papers.</p>
           <Button
             onClick={() => go("semester")}
-            variant="secondary"
-            style={{ background: "#ffffff", color: "#0c4a34", fontWeight: 700, border: "none" }}
+            className="welcome-banner-btn"
           >
             Open All Courses <Icon name="arrow"/>
           </Button>
         </div>
         <div className="progress-ring">
-          <strong style={{ color: "#ffffff" }}>100%</strong>
-          <span style={{ color: "rgba(255,255,255,0.8)" }}>unlocked</span>
+          <strong>100%</strong>
+          <span>unlocked</span>
         </div>
       </Card>
     ) : pendingPayment ? (
-      <Card className="welcome-banner" style={{ background: "linear-gradient(135deg, #78350f 0%, #d97706 100%)", color: "#ffffff" }}>
+      <Card className="welcome-banner welcome-banner-pending">
         <div>
           <Badge tone="warning">⏳ RECEIPT UNDER REVIEW</Badge>
-          <Heading level={2} style={{ color: "#ffffff", marginTop: "6px" }}>Verification in Progress</Heading>
-          <p style={{ color: "rgba(255,255,255,0.9)" }}>
+          <Heading level={2}>Verification in Progress</Heading>
+          <p>
             Your receipt (Ref: <b>{pendingPayment.referenceCode}</b>) is being checked by Ambo University staff. Usually verified within {settings?.paymentVerificationSlaHours || "2"} hours.
           </p>
           <Button
             onClick={() => go("payments")}
-            variant="secondary"
-            style={{ background: "#ffffff", color: "#92400e", fontWeight: 700, border: "none" }}
+            className="welcome-banner-btn"
           >
             View Receipt Status <Icon name="arrow"/>
           </Button>
         </div>
-        <div className="progress-ring">
-          <strong style={{ color: "#ffffff" }}>⏳</strong>
-          <span style={{ color: "rgba(255,255,255,0.8)" }}>verifying</span>
+        <div className="progress-ring" style={{ borderColor: "#fde68a" }}>
+          <strong style={{ color: "#d97706" }}>⏳</strong>
+          <span style={{ color: "#b45309" }}>verifying</span>
         </div>
       </Card>
     ) : rejectedPayment ? (
-      <Card className="welcome-banner" style={{ background: "linear-gradient(135deg, #7f1d1d 0%, #dc2626 100%)", color: "#ffffff" }}>
+      <Card className="welcome-banner welcome-banner-rejected">
         <div>
           <Badge tone="danger">⚠️ RECEIPT NEEDS CORRECTION</Badge>
-          <Heading level={2} style={{ color: "#ffffff", marginTop: "6px" }}>Please Re-upload Receipt</Heading>
-          <p style={{ color: "rgba(255,255,255,0.9)" }}>
+          <Heading level={2}>Please Re-upload Receipt</Heading>
+          <p>
             Reason: "{rejectedPayment.rejectionReason || "Could not verify transaction code"}"
           </p>
           <Button
             onClick={() => go("checkout")}
-            variant="secondary"
-            style={{ background: "#ffffff", color: "#991b1b", fontWeight: 700, border: "none" }}
+            className="welcome-banner-btn"
           >
             Resubmit Receipt <Icon name="arrow"/>
           </Button>
         </div>
-        <div className="progress-ring">
-          <strong style={{ color: "#ffffff" }}>⚠️</strong>
-          <span style={{ color: "rgba(255,255,255,0.8)" }}>action needed</span>
+        <div className="progress-ring" style={{ borderColor: "#fecaca" }}>
+          <strong style={{ color: "#dc2626" }}>⚠️</strong>
+          <span style={{ color: "#991b1b" }}>action needed</span>
         </div>
       </Card>
     ) : (
-      <Card className="welcome-banner" style={{ background: "linear-gradient(135deg, #0c4a34 0%, #1e3a5f 100%)", color: "#ffffff", border: "1px solid rgba(251, 191, 36, 0.4)" }}>
+      <Card className="welcome-banner welcome-banner-cta">
         <div>
           <Badge tone="accent">⚡ ONE-TIME SEMESTER PASS · {settings?.semesterPriceEtb || 50} ETB</Badge>
-          <Heading level={2} style={{ color: "#ffffff", marginTop: "6px" }}>Unlock All 7 {streamLabel} Courses</Heading>
-          <p style={{ color: "rgba(255,255,255,0.9)" }}>
+          <Heading level={2}>Unlock All 7 {streamLabel} Courses</Heading>
+          <p>
             Get past mid exams, finals, and verified answer keys for the entire semester.
           </p>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "12px" }}>
             <Button
               onClick={() => go("checkout")}
-              style={{ background: "#FBBF24", color: "#0c4a34", fontWeight: 700, border: "none", padding: "10px 18px" }}
+              className="btn-pay"
+              style={{ border: "none", padding: "10px 18px" }}
             >
               💳 Pay {settings?.semesterPriceEtb || 50} ETB via Telebirr / CBE <Icon name="arrow"/>
             </Button>
             <Button
               onClick={() => go("viewer")}
               variant="secondary"
-              style={{ background: "rgba(255,255,255,0.15)", color: "#ffffff", border: "1px solid rgba(255,255,255,0.3)" }}
+              className="btn-sample"
             >
               Preview free sample
             </Button>
           </div>
         </div>
-        <div className="progress-ring">
-          <strong style={{ color: "#FBBF24" }}>{settings?.semesterPriceEtb || 50}</strong>
-          <span style={{ color: "rgba(255,255,255,0.8)" }}>ETB only</span>
+        <div className="progress-ring" style={{ borderColor: "#bce4d2" }}>
+          <strong style={{ color: "#166b55" }}>{settings?.semesterPriceEtb || 50}</strong>
+          <span style={{ color: "#166b55" }}>ETB only</span>
         </div>
       </Card>
     )}
@@ -3962,12 +3960,13 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
                 <button
                   type="button"
                   style={{
-                    background: "rgba(255,255,255,0.18)",
-                    border: "none",
+                    background: "#f0f4f2",
+                    border: "1px solid #d5e0dc",
                     borderRadius: "4px",
-                    color: "#ffffff",
+                    color: "#166b55",
                     fontSize: "0.68rem",
-                    padding: "1px 6px",
+                    fontWeight: 650,
+                    padding: "2px 7px",
                     cursor: "pointer",
                   }}
                   onClick={() => copyToClipboard(currentUser.email || "", "email")}
@@ -3998,13 +3997,15 @@ function Profile({ currentUser, onLogout, go }: { currentUser: UserSession; onLo
           </div>
           <div className="student-id-meta-item">
             <span className="student-id-meta-label">Standing</span>
-            <span className="student-id-meta-value" style={{ color: "#34d399", fontFamily: "inherit" }}>● Good Standing</span>
+            <span className="student-id-meta-value" style={{ color: "#16825f", fontFamily: "inherit" }}>● Good Standing</span>
           </div>
         </div>
 
-        <div className="student-id-barcode-row">
-          <span>||| | ||||| ||| || |||||| | |||</span>
-          <span>ETH-AMU-2026-FTN#{currentUser.userId.slice(0, 6)}</span>
+        <div className="student-id-footer-row">
+          <span className="student-id-footer-badge">
+            <Icon name="shield" size={13} /> Official Ambo University Credential
+          </span>
+          <span className="student-id-serial">ETH-AMU-2026-FTN#{currentUser.userId.slice(0, 6)}</span>
         </div>
       </div>
 

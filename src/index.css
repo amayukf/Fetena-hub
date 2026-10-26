@@ -393,28 +393,185 @@ footer small { grid-column: span 2; color: var(--muted); border-top: 1px solid v
 .section-title p { margin-top: 5px; font-size: .85rem; }
 
 /* Student */
-.welcome-banner { background: linear-gradient(120deg,var(--accent),#238069); color: white; padding: 30px 36px; display: flex; align-items: center; justify-content: space-between; overflow: hidden; position: relative; }
-.welcome-banner > div:first-child { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; z-index: 1; }
-.welcome-banner p { color: rgba(255,255,255,.75); }
-.welcome-banner .badge { background: rgba(255,255,255,.15); color: white; }
-.welcome-banner .btn, .welcome-banner-btn {
-  margin-top: 8px;
-  background: #ffffff !important;
-  color: var(--accent) !important;
-  border: 1px solid rgba(255,255,255,.9) !important;
-  font-weight: 700 !important;
-  box-shadow: 0 4px 14px rgba(0,0,0,.15);
+/* Student Welcome Banners - Clean Academic Theme */
+.welcome-banner {
+  padding: 24px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  overflow: hidden;
+  position: relative;
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 20px -2px rgba(22, 107, 85, 0.06), 0 1px 3px rgba(0, 0, 0, 0.02);
 }
-.welcome-banner .btn:hover, .welcome-banner-btn:hover {
-  background: #f0f7f4 !important;
-  color: var(--accent-hover) !important;
-  border-color: #ffffff !important;
+.welcome-banner > div:first-child {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  z-index: 1;
+}
+.welcome-banner h2 {
+  font-size: 1.35rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  margin: 4px 0 0;
+}
+.welcome-banner p {
+  font-size: 0.90rem;
+  line-height: 1.5;
+}
+
+/* Unlocked State */
+.welcome-banner-unlocked {
+  background: linear-gradient(135deg, #ffffff 0%, #f3faf6 55%, #e6f6ee 100%);
+  border: 1px solid #b7e4ce;
+  border-left: 5px solid #16825f;
+}
+.welcome-banner-unlocked h2 { color: #064e3b; }
+.welcome-banner-unlocked p { color: #2d4a42; }
+.welcome-banner-unlocked .badge {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #86efac;
+  font-weight: 750;
+}
+.welcome-banner-unlocked .welcome-banner-btn {
+  background: #166b55 !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+  font-weight: 700 !important;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px rgba(22, 107, 85, 0.22);
+}
+.welcome-banner-unlocked .welcome-banner-btn:hover {
+  background: #0f5946 !important;
+  color: #ffffff !important;
   transform: translateY(-1px);
 }
-.progress-ring { width: 120px; height: 120px; border: 9px solid rgba(255,255,255,.18); border-top-color: white; border-right-color: white; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; transform: rotate(12deg); }
-.progress-ring > * { transform: rotate(-12deg); }
-.progress-ring strong { font-size: 1.35rem; }
-.progress-ring span { font-size: .7rem; color: rgba(255,255,255,.75); }
+
+/* Pending Review State */
+.welcome-banner-pending {
+  background: linear-gradient(135deg, #ffffff 0%, #fffdf5 55%, #fef3c7 100%);
+  border: 1px solid #fde68a;
+  border-left: 5px solid #d97706;
+}
+.welcome-banner-pending h2 { color: #78350f; }
+.welcome-banner-pending p { color: #92400e; }
+.welcome-banner-pending .badge {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  font-weight: 750;
+}
+.welcome-banner-pending .welcome-banner-btn {
+  background: #d97706 !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+  font-weight: 700 !important;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px rgba(217, 119, 6, 0.25);
+}
+.welcome-banner-pending .welcome-banner-btn:hover {
+  background: #b45309 !important;
+  color: #ffffff !important;
+  transform: translateY(-1px);
+}
+
+/* Rejected State */
+.welcome-banner-rejected {
+  background: linear-gradient(135deg, #ffffff 0%, #fff5f5 55%, #fee2e2 100%);
+  border: 1px solid #fecaca;
+  border-left: 5px solid #dc2626;
+}
+.welcome-banner-rejected h2 { color: #7f1d1d; }
+.welcome-banner-rejected p { color: #991b1b; }
+.welcome-banner-rejected .badge {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  font-weight: 750;
+}
+.welcome-banner-rejected .welcome-banner-btn {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+  font-weight: 700 !important;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.25);
+}
+.welcome-banner-rejected .welcome-banner-btn:hover {
+  background: #b91c1c !important;
+  color: #ffffff !important;
+  transform: translateY(-1px);
+}
+
+/* Default / Unpaid CTA State */
+.welcome-banner-cta {
+  background: linear-gradient(135deg, #ffffff 0%, #f6faf8 55%, #eaf4f0 100%);
+  border: 1px solid #c2ded3;
+  border-left: 5px solid #166b55;
+}
+.welcome-banner-cta h2 { color: #0d382c; }
+.welcome-banner-cta p { color: #2d4d44; }
+.welcome-banner-cta .badge {
+  background: #e8f5f0;
+  color: #166b55;
+  border: 1px solid #bce4d2;
+  font-weight: 750;
+}
+.welcome-banner-cta .btn-pay {
+  background: #166b55 !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px rgba(22, 107, 85, 0.25);
+}
+.welcome-banner-cta .btn-pay:hover {
+  background: #0f5946 !important;
+  color: #ffffff !important;
+  transform: translateY(-1px);
+}
+.welcome-banner-cta .btn-sample {
+  background: #ffffff !important;
+  color: #166b55 !important;
+  border: 1px solid #c2ded3 !important;
+  font-weight: 650 !important;
+  border-radius: var(--radius-sm);
+}
+.welcome-banner-cta .btn-sample:hover {
+  background: #f4f8f6 !important;
+  border-color: #166b55 !important;
+}
+
+/* Progress Ring & Badges */
+.progress-ring {
+  width: 96px;
+  height: 96px;
+  border: 5px solid #d1fae5;
+  border-top-color: #10b981;
+  border-right-color: #10b981;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.12);
+  flex-shrink: 0;
+}
+.progress-ring strong {
+  font-size: 1.25rem;
+  color: #065f46;
+  font-weight: 800;
+}
+.progress-ring span {
+  font-size: 0.65rem;
+  color: #10b981;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .semester-grid { display: grid; grid-template-columns: 1fr 1fr .8fr; gap: 16px; }
 .semester-mini { padding: 22px; display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; }
 .semester-mini > .card-icon { grid-row: span 3; }
@@ -607,48 +764,27 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
 .profile-card > span:not(.badge) { color: var(--muted); font-size: .84rem; }
 
 /* =============================================================
-   DIGITAL STUDENT ID CARD & PROFILE ENHANCEMENT
+   OFFICIAL AMBO UNIVERSITY CREDENTIAL CARD & PROFILE
    ============================================================= */
 .student-id-card {
   position: relative;
-  background: linear-gradient(135deg, #064e3b 0%, #065f46 45%, #047857 100%);
-  border-radius: 20px;
-  padding: 22px 20px;
-  color: #ffffff;
-  box-shadow: 0 16px 36px -10px rgba(6, 78, 59, 0.45), 0 4px 12px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 24px 22px;
+  color: var(--ink);
+  box-shadow: 0 4px 24px -2px rgba(22, 107, 85, 0.07), 0 1px 4px rgba(0, 0, 0, 0.03);
+  border: 1px solid #dbe6e2;
+  border-top: 4px solid var(--accent);
   overflow: hidden;
-  margin-bottom: 16px;
-}
-.student-id-card::before {
-  content: "";
-  position: absolute;
-  top: -50px;
-  right: -50px;
-  width: 200px;
-  height: 200px;
-  background: radial-gradient(circle, rgba(52, 211, 153, 0.35) 0%, rgba(255, 255, 255, 0) 70%);
-  border-radius: 50%;
-  pointer-events: none;
-}
-.student-id-card::after {
-  content: "";
-  position: absolute;
-  bottom: -40px;
-  left: -40px;
-  width: 160px;
-  height: 160px;
-  background: radial-gradient(circle, rgba(20, 184, 166, 0.25) 0%, rgba(255, 255, 255, 0) 70%);
-  border-radius: 50%;
-  pointer-events: none;
+  margin-bottom: 20px;
 }
 .student-id-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
-  padding-bottom: 10px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid #edf2f0;
+  padding-bottom: 12px;
 }
 .student-id-uni {
   display: flex;
@@ -658,57 +794,55 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #a7f3d0;
+  color: var(--accent);
 }
 .student-id-status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 0.68rem;
-  font-weight: 700;
+  font-weight: 750;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: rgba(255, 255, 255, 0.16);
-  border: 1px solid rgba(255, 255, 255, 0.26);
-  padding: 3px 9px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 4px 10px;
   border-radius: 99px;
-  color: #ffffff;
-  backdrop-filter: blur(6px);
+  color: #065f46;
 }
 .student-id-status .pulse-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #34d399;
-  box-shadow: 0 0 8px #34d399;
+  background: #10b981;
 }
 .student-id-hero {
   display: flex;
   align-items: center;
   gap: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 .student-id-avatar-wrap {
   position: relative;
   flex-shrink: 0;
 }
 .student-id-avatar {
-  width: 70px;
-  height: 70px;
+  width: 68px;
+  height: 68px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #047857 0%, #064e3b 100%);
+  background: linear-gradient(135deg, #166b55 0%, #0f5946 100%);
   color: #ffffff;
   display: grid;
   place-items: center;
   font-weight: 800;
-  font-size: 1.45rem;
-  border: 3px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+  font-size: 1.4rem;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 2px #dbe6e2, 0 4px 12px rgba(22, 107, 85, 0.2);
 }
 .student-id-verified-tick {
   position: absolute;
-  bottom: 0;
-  right: 0;
+  bottom: -2px;
+  right: -2px;
   width: 22px;
   height: 22px;
   border-radius: 50%;
@@ -720,7 +854,7 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
   justify-content: center;
   font-size: 0.72rem;
   font-weight: 900;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 .student-id-info {
   display: flex;
@@ -729,16 +863,16 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
   min-width: 0;
 }
 .student-id-name {
-  font-size: 1.25rem;
+  font-size: 1.35rem;
   font-weight: 800;
-  color: #ffffff;
+  color: #172522;
   letter-spacing: -0.02em;
   margin: 0;
   line-height: 1.25;
 }
 .student-id-contact {
   font-size: 0.82rem;
-  color: #d1fae5;
+  color: #4b635c;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -754,22 +888,22 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  padding: 4px 9px;
   border-radius: 6px;
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-weight: 600;
-  background: rgba(255, 255, 255, 0.15);
-  color: #ecfdf5;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #f4f8f6;
+  color: #1e3b33;
+  border: 1px solid #dbe6e2;
 }
 .student-id-meta-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  background: rgba(0, 0, 0, 0.22);
+  gap: 10px;
+  background: #f8faf9;
   border-radius: 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 12px 14px;
+  border: 1px solid #e5edea;
 }
 .student-id-meta-item {
   display: flex;
@@ -777,28 +911,44 @@ td { padding: 14px 18px; border-top: 1px solid var(--line); font-size: .8rem; co
   gap: 2px;
 }
 .student-id-meta-label {
-  font-size: 0.64rem;
+  font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #a7f3d0;
+  color: #5a756e;
   font-weight: 700;
 }
 .student-id-meta-value {
-  font-size: 0.80rem;
+  font-size: 0.84rem;
   font-weight: 700;
-  color: #ffffff;
+  color: #172522;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
-.student-id-barcode-row {
+.student-id-footer-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 12px;
-  padding-top: 8px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.2);
-  font-size: 0.65rem;
-  color: rgba(255, 255, 255, 0.7);
-  font-family: monospace;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed #e1ebe7;
+  font-size: 0.72rem;
+  color: #5a756e;
+}
+.student-id-footer-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #27473f;
+}
+.student-id-serial {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: #edf3f0;
+  border: 1px solid #dbe6e2;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 650;
+  color: #166b55;
+  font-size: 0.72rem;
 }
 .profile-stats-row {
   display: grid;
