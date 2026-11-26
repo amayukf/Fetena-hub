@@ -27,6 +27,22 @@ describe("server-rendered paper pages", () => {
     expect(first.image.equals(second.image)).toBe(false);
   });
 
+  it("renders smaller WebP pages when requested for fast mobile viewing", async () => {
+    const pdf = createOnePagePdf();
+    const watermark = {
+      fullName: "Student One",
+      studentId: "AMU-1001",
+      date: "2026-05-10",
+    };
+    const pngResult = await renderWatermarkedPage(pdf, 1, watermark, "png");
+    const webpResult = await renderWatermarkedPage(pdf, 1, watermark, "webp");
+
+    expect(webpResult.pageCount).toBe(1);
+    expect(webpResult.image.subarray(0, 4).toString("ascii")).toBe("RIFF");
+    expect(webpResult.image.subarray(8, 12).toString("ascii")).toBe("WEBP");
+    expect(webpResult.image.length).toBeLessThan(pngResult.image.length);
+  });
+
   it("rejects page numbers beyond the source document", async () => {
     await expect(renderWatermarkedPage(createOnePagePdf(), 2, {
       fullName: "Student One",

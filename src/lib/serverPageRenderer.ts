@@ -1,4 +1,4 @@
-import { createCanvas, loadImage, type SKRSContext2D } from "@napi-rs/canvas";
+import { createCanvas, loadImage, type Canvas, type SKRSContext2D } from "@napi-rs/canvas";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { detectFileSignature } from "./storage";
 
@@ -64,10 +64,22 @@ function addWatermark(
   context.restore();
 }
 
+export type PageImageFormat = "png" | "webp" | "jpeg";
+
+async function encodeCanvas(
+  canvas: Canvas,
+  format: PageImageFormat = "png"
+): Promise<Buffer> {
+  if (format === "webp") return canvas.encode("webp", 82);
+  if (format === "jpeg") return canvas.encode("jpeg", 85);
+  return canvas.encode("png");
+}
+
 export async function renderDocumentPage(
   data: Uint8Array,
   pageNumber: number,
-  watermark?: PageWatermark
+  watermark?: PageWatermark,
+  format: PageImageFormat = "png"
 ): Promise<{ image: Buffer; pageCount: number }> {
   const kind = documentKind(data);
 
@@ -91,7 +103,7 @@ export async function renderDocumentPage(
     if (watermark) {
       addWatermark(context, width, height, watermark);
     }
-    return { image: await canvas.encode("png"), pageCount: 1 };
+    return { image: await encodeCanvas(canvas, format), pageCount: 1 };
   }
 
   const task = getDocument({
@@ -130,7 +142,7 @@ export async function renderDocumentPage(
       addWatermark(context, width, height, watermark);
     }
 
-    return { image: await canvas.encode("png"), pageCount: document.numPages };
+    return { image: await encodeCanvas(canvas, format), pageCount: document.numPages };
   } finally {
     await task.destroy();
   }
@@ -138,20 +150,22 @@ export async function renderDocumentPage(
 
 export async function applyWatermarkToPage(
   image: Uint8Array,
-  watermark: PageWatermark
+  watermark: PageWatermark,
+  format: PageImageFormat = "png"
 ): Promise<Buffer> {
   const source = await loadImage(Buffer.from(image));
   const canvas = createCanvas(source.width, source.height);
   const context = canvas.getContext("2d");
   context.drawImage(source, 0, 0);
   addWatermark(context, source.width, source.height, watermark);
-  return canvas.encode("png");
+  return encodeCanvas(canvas, format);
 }
 
 export async function renderWatermarkedPage(
   data: Uint8Array,
   pageNumber: number,
-  watermark: PageWatermark
+  watermark: PageWatermark,
+  format: PageImageFormat = "png"
 ): Promise<{ image: Buffer; pageCount: number }> {
-  return renderDocumentPage(data, pageNumber, watermark);
+  return renderDocumentPage(data, pageNumber, watermark, format);
 }

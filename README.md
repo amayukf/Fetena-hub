@@ -24,6 +24,7 @@
 
 **Fetena Hub** is a secure, high-performance web application purpose-built for Ambo University students. It provides verified, digitized access to historical freshman examination papers across **Natural Science** and **Social Science** streams.
 
+
 Engineered specifically for low-bandwidth campus mobile networks (2G/3G), Fetena Hub features server-side dynamic watermarking, automated database housekeeping, Google OAuth 2.0 integration, Telebirr/CBE payment verification, and an administrative paper buyback flow.
 
 ---

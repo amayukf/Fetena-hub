@@ -19,6 +19,7 @@ import {
   applyWatermarkToPage,
   getDocumentPageCount,
   renderDocumentPage,
+  type PageImageFormat,
 } from '../src/lib/serverPageRenderer';
 import type { StreamCode } from '../src/types';
 
@@ -61,6 +62,29 @@ export const prisma = new PrismaClient(
       }
     : undefined
 );
+
+function schedulePreRenderPaperPages(
+  paperId: string,
+  source: Uint8Array,
+  sourceHash: string,
+  pageCount: number
+): void {
+  if (process.env.NODE_ENV === 'test') return;
+  const maxPreRender = Math.min(Math.max(1, pageCount), 20);
+  void (async () => {
+    for (let pageNum = 1; pageNum <= maxPreRender; pageNum += 1) {
+      try {
+        const pageKey = `published/${paperId}/pages/${sourceHash}-${pageNum}.png`;
+        if (await storage.exists(pageKey)) continue;
+        const rendered = await renderDocumentPage(source, pageNum);
+        await storage.upload(pageKey, rendered.image, 'image/png');
+      } catch (err) {
+        console.warn(`[prerender] Failed to pre-render page ${pageNum} of paper ${paperId}:`, err);
+        break;
+      }
+    }
+  })();
+}
 
 function sha256(data: string | Buffer): string {
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -3446,49 +3470,85 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
         return sendError(res, 403, 'Maximum 2 concurrent sessions reached.');
       }
 
-      const source = await storage.download(paper.storageKey);
-      if (!source) {
-        return sendError(res, 404, 'Exam paper document file is missing from secure storage.');
+      if (paper.pageCount && paper.pageCount >= 1 && pageNum > paper.pageCount) {
+        return sendError(res, 416, `Requested page exceeds the document's ${paper.pageCount} pages.`);
       }
 
-      const sourceHash = computeSha256(source);
-      const pageKey = `published/${paper.id}/pages/${sourceHash}-${pageNum}.png`;
-      let renderedPage = await storage.download(pageKey);
-      let pageCount: number;
-      if (renderedPage) {
-        pageCount = paper.pageCount && paper.pageCount >= 1 ? paper.pageCount : await getDocumentPageCount(source);
-        if (pageNum > pageCount) {
-          return sendError(res, 416, `Requested page exceeds the document's ${pageCount} pages.`);
+      const requestedFormat = url.searchParams.get('format')?.toLowerCase();
+      const outputFormat: PageImageFormat =
+        requestedFormat === 'webp' ? 'webp' : requestedFormat === 'jpeg' || requestedFormat === 'jpg' ? 'jpeg' : 'png';
+
+      // Check cached rendered page first using paper.sha256 so we avoid downloading
+      // the full source PDF from object storage on every page view.
+      const primaryPageKey = `published/${paper.id}/pages/${paper.sha256}-${pageNum}.png`;
+      let renderedPage = await storage.download(primaryPageKey);
+      let pageCount = paper.pageCount && paper.pageCount >= 1 ? paper.pageCount : 0;
+
+      if (!renderedPage) {
+        const source = await storage.download(paper.storageKey);
+        if (!source) {
+          return sendError(res, 404, 'Exam paper document file is missing from secure storage.');
         }
-      } else {
-        let rendered;
-        try {
-          rendered = await renderDocumentPage(source, pageNum);
-        } catch (error) {
-          if (error instanceof RangeError) {
-            return sendError(res, 416, 'Requested page is outside the document.');
+
+        const sourceHash = computeSha256(source);
+        const pageKey =
+          sourceHash === paper.sha256 ? primaryPageKey : `published/${paper.id}/pages/${sourceHash}-${pageNum}.png`;
+        if (pageKey !== primaryPageKey) {
+          renderedPage = await storage.download(pageKey);
+        }
+
+        if (renderedPage) {
+          if (!pageCount) {
+            pageCount = await getDocumentPageCount(source);
           }
-          throw error;
+          if (pageNum > pageCount) {
+            return sendError(res, 416, `Requested page exceeds the document's ${pageCount} pages.`);
+          }
+        } else {
+          let rendered;
+          try {
+            rendered = await renderDocumentPage(source, pageNum);
+          } catch (error) {
+            if (error instanceof RangeError) {
+              return sendError(res, 416, 'Requested page is outside the document.');
+            }
+            throw error;
+          }
+          pageCount = rendered.pageCount;
+          await storage.upload(pageKey, rendered.image, 'image/png');
+          renderedPage = rendered.image;
         }
-        pageCount = rendered.pageCount;
-        await storage.upload(pageKey, rendered.image, 'image/png');
-        renderedPage = rendered.image;
       }
 
-      const watermarkedPage = await applyWatermarkToPage(renderedPage, {
-        fullName: actor.user.fullName || actor.id,
-        studentId: actor.user.studentId || actor.id,
-        date: new Date().toISOString().slice(0, 10),
-      });
+      const watermarkedPage = await applyWatermarkToPage(
+        renderedPage,
+        {
+          fullName: actor.user.fullName || actor.id,
+          studentId: actor.user.studentId || actor.id,
+          date: new Date().toISOString().slice(0, 10),
+        },
+        outputFormat
+      );
 
-      res.writeHead(200, {
-        'Content-Type': 'image/png',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-        'Pragma': 'no-cache',
+      const contentType =
+        outputFormat === 'webp' ? 'image/webp' : outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
+      const cacheControl =
+        outputFormat === 'webp' || outputFormat === 'jpeg'
+          ? 'private, max-age=300'
+          : 'no-store, no-cache, must-revalidate, private';
+
+      const responseHeaders: Record<string, string> = {
+        'Content-Type': contentType,
+        'Cache-Control': cacheControl,
         'X-Content-Type-Options': 'nosniff',
         'Content-Disposition': 'inline',
         'X-Paper-Page-Count': String(pageCount),
-      });
+      };
+      if (outputFormat === 'png') {
+        responseHeaders['Pragma'] = 'no-cache';
+      }
+
+      res.writeHead(200, responseHeaders);
       res.end(watermarkedPage);
       return;
     }
@@ -3828,6 +3888,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
             },
           },
         });
+
+        if (binData && paper.status === PaperStatus.PUBLISHED) {
+          schedulePreRenderPaperPages(paper.id, binData, paper.sha256, exactPageCount);
+        }
 
         results.push(paper);
       }

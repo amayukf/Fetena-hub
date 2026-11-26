@@ -2279,11 +2279,11 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
     if (paper && accessState?.allowed) {
       if (page < totalPages) {
         const nextImg = new Image();
-        nextImg.src = `/api/papers/${encodeURIComponent(paper.id)}/pages/${page + 1}?userId=${encodeURIComponent(currentUser.userId)}`;
+        nextImg.src = `/api/papers/${encodeURIComponent(paper.id)}/pages/${page + 1}?userId=${encodeURIComponent(currentUser.userId)}&format=webp`;
       }
       if (page > 1) {
         const prevImg = new Image();
-        prevImg.src = `/api/papers/${encodeURIComponent(paper.id)}/pages/${page - 1}?userId=${encodeURIComponent(currentUser.userId)}`;
+        prevImg.src = `/api/papers/${encodeURIComponent(paper.id)}/pages/${page - 1}?userId=${encodeURIComponent(currentUser.userId)}&format=webp`;
       }
     }
   }, [paper?.id, page, totalPages, accessState?.allowed, currentUser.userId]);
@@ -2619,7 +2619,7 @@ function Viewer({ go, currentUser, paper }: { go: (s: Screen) => void; currentUs
             ) : paper && accessState?.allowed ? (
               <img
                 key={`${paper.id}-${page}-${pageRequestVersion}`}
-                src={`/api/papers/${encodeURIComponent(paper.id)}/pages/${page}?userId=${encodeURIComponent(currentUser.userId)}`}
+                src={`/api/papers/${encodeURIComponent(paper.id)}/pages/${page}?userId=${encodeURIComponent(currentUser.userId)}&format=webp`}
                 alt={`${paper.title}, page ${page}`}
                 draggable={false}
                 onLoad={() => setPageLoading(false)}
